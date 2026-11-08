@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Football 제출</title>
+<style>
+  :root{ --bg:#f4f6f9; --card:#fff; --line:#cbd5e0; --accent:#2563eb; --ok:#16a34a; --err:#dc2626; --fg:#1f2937; --muted:#6b7280; }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){ --bg:#0f172a; --card:#1e293b; --line:#334155; --fg:#e2e8f0; --muted:#94a3b8; }
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:system-ui,"Malgun Gothic",sans-serif; background:var(--bg); color:var(--fg); }
+  .wrap{ max-width:460px; margin:6vh auto; padding:0 16px; }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:24px; box-shadow:0 4px 16px rgba(0,0,0,.06); }
+  h1{ font-size:20px; margin:0 0 4px; }
+  .sub{ color:var(--muted); font-size:13px; margin:0 0 18px; line-height:1.5; }
+  label{ display:block; font-size:13px; font-weight:600; margin:14px 0 6px; }
+  input,select{ width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:14px; background:var(--card); color:var(--fg); }
+  button{ width:100%; margin-top:20px; padding:12px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:15px; font-weight:600; cursor:pointer; }
+  button:disabled{ opacity:.55; cursor:default; }
+  #msg{ margin-top:14px; font-size:14px; min-height:20px; white-space:pre-wrap; }
+  #msg.ok{ color:var(--ok); } #msg.err{ color:var(--err); }
+  .hint{ color:var(--muted); font-size:12px; margin-top:6px; }
+</style>
+</head>
+<body>
+<div class="wrap"><div class="card">
+  <h1>&#9917; AI Football 제출</h1>
+  <label>이름 (영문)</label>
+  <input id="name" type="text" placeholder="예) HongGilDong" autocomplete="off">
+  <label>구분</label>
+  <select id="div"><option value="주니어">주니어</option><option value="시니어">시니어</option></select>
+  <label>players.py 파일</label>
+  <input id="file" type="file" accept=".py,text/x-python,text/plain">
+  <p class="hint">Webots에서 코딩한 players.py 를 선택하세요.</p>
+  <button id="btn" onclick="submitFile()">&#128228; 제출</button>
+  <div id="msg"></div>
+</div></div>
+<script src="submit_config.js"></script>
+<script>window.SUBMIT_URL = window.SUBMIT_URL || "";</script>
+<script>
+function setMsg(t, kind){ var m=document.getElementById('msg'); m.textContent=t; m.className=kind||''; }
+function submitFile(){
+  var name=(document.getElementById('name').value||'').trim();
+  var division=document.getElementById('div').value;
+  var f=document.getElementById('file').files[0];
+  if(!name){ setMsg('이름을 입력하세요.','err'); return; }
+  if(!/^[A-Za-z0-9 ._-]+$/.test(name)){ setMsg('이름을 영문으로 입력하세요.','err'); return; }
+  if(!f){ setMsg('players.py 파일을 선택하세요.','err'); return; }
+  if(!window.SUBMIT_URL || /PASTE|YOUR_|^\s*$/.test(window.SUBMIT_URL)){ setMsg('제출 주소가 설정되지 않았어요(선생님께 문의).','err'); return; }
+  var btn=document.getElementById('btn'); btn.disabled=true; setMsg('제출 중…','');
+  var reader=new FileReader();
+  reader.onload=function(){
+    var payload=JSON.stringify({
+      subfolder:(division||name), header:['이름','구분','파일'], row:[name, division, name+'.py'],
+      files:[{ name:name+'.py', content:String(reader.result), mime:'text/x-python' }]
+    });
+    fetch(window.SUBMIT_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:payload })
+      .then(function(r){ return r.json().catch(function(){ return { ok:r.ok }; }); })
+      .then(function(j){
+        if(j && j.ok!==false){ setMsg('✅ 제출 완료! ('+name+' · '+division+')','ok'); }
+        else{ setMsg('❌ 제출 실패: '+((j&&j.message)||''),'err'); btn.disabled=false; }
+      })
+      .catch(function(e){ setMsg('❌ 제출 실패: '+e,'err'); btn.disabled=false; });
+  };
+  reader.onerror=function(){ setMsg('파일 읽기 실패','err'); btn.disabled=false; };
+  reader.readAsText(f);
+}
+</script>
+</body>
+</html>

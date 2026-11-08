@@ -1,0 +1,1729 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>AI Football Editor</title>
+<!-- Blockly 를 로컬 번들에서 로드 → 인터넷 없이(오프라인 교실/맥) 동작 -->
+<script src="blockly/blockly_compressed.js"></script>
+<script src="blockly/blocks_compressed.js"></script>
+<script src="blockly/python_compressed.js"></script>
+<!-- 표준 블럭 메시지: 영어(en) → 한국어(ko) 순서로 로드해 두 테이블을 스냅샷한다.
+     ko 를 뒤에 두어 기본 언어가 한국어가 되게 한다. -->
+<script src="blockly/msg/en.js"></script>
+<script>var EN_MSG = Object.assign(Object.create(null), Blockly.Msg);</script>
+<script src="blockly/msg/ko.js"></script>
+<script>var KO_MSG = Object.assign(Object.create(null), Blockly.Msg);</script>
+<style>
+  html, body { margin:0; height:100%; font-family:sans-serif; }
+  #top { height:48px; background:#2b6cb0; color:#fff; display:flex;
+         align-items:center; padding:0 16px; gap:8px; overflow-x:auto; }
+  #top > *:not(h1) { flex-shrink:0; }
+  #top h1 { font-size:16px; margin:0; flex:1 1 0; min-width:0;
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  button { font-size:14px; padding:8px 14px; border:0; border-radius:6px;
+           cursor:pointer; white-space:nowrap; }
+  .primary { background:#38a169; color:#fff; }
+  .ghost { background:#4a5568; color:#fff; }
+  /* 상단 드롭다운 메뉴 */
+  .menu { position:relative; }
+  .menu-list { display:none; position:fixed; z-index:6000;
+               background:#2d3748; border-radius:8px; box-shadow:0 12px 30px rgba(0,0,0,.35);
+               min-width:180px; padding:6px; }
+  .menu-list.open { display:block; }
+  .menu-list button { display:block; width:100%; text-align:left; background:transparent;
+                      color:#e2e8f0; padding:10px 12px; border-radius:6px; font-size:14px; }
+  .menu-list button:hover { background:#4a5568; }
+  #main { display:flex; height:calc(100% - 48px); }
+  #blkEditor { flex:1; display:flex; flex-direction:column; height:100%; min-width:0; }
+  #blkTabs { display:flex; gap:4px; padding:8px 8px 0; background:#edf2f7; flex:0 0 auto; overflow-x:auto; }
+  #blocklyDiv { flex:1; min-height:0; }
+  #side { width:360px; border-left:1px solid #ddd; display:flex;
+          flex-direction:column; }
+  #side h2 { font-size:13px; margin:10px 12px 4px; color:#555; }
+  #code { flex:1; margin:0 12px 12px; font-family:monospace; font-size:15px;
+          line-height:1.5; white-space:pre; overflow:auto; background:#1a202c; color:#e2e8f0;
+          padding:12px; border-radius:6px; }
+  #status { padding:8px 12px; font-size:13px; color:#2b6cb0; min-height:18px; }
+  /* 'Webots에 저장' 결과 배너 (레이아웃에 영향 없는 고정 오버레이) */
+  #saveResult { position:fixed; top:56px; left:50%; transform:translateX(-50%);
+    z-index:7000; max-width:80%; padding:12px 20px; border-radius:10px;
+    font-size:15px; font-weight:700; line-height:1.5; white-space:pre-line;
+    box-shadow:0 10px 30px rgba(0,0,0,.28); display:none; cursor:pointer; text-align:center; }
+  #saveResult.ok   { background:#c6f6d5; color:#22543d; border:2px solid #38a169; }
+  #saveResult.warn { background:#fefcbf; color:#744210; border:2px solid #d69e2e; }
+  #saveResult.err  { background:#fed7d7; color:#742a2a; border:2px solid #e53e3e; }
+  #saveResult.busy { background:#e2e8f0; color:#2d3748; border:2px solid #a0aec0; font-weight:600; }
+  #pyEditor { flex:1; display:flex; flex-direction:column; height:100%; }
+  #pyTabs { display:flex; gap:4px; padding:8px 8px 0; background:#edf2f7; overflow-x:auto; }
+  .pytab { background:#cbd5e0; color:#2d3748; padding:6px 12px; font-size:13px;
+           border-radius:6px 6px 0 0; white-space:nowrap; flex:0 0 auto; }
+  .pytab.active { background:#1a202c; color:#fff; }
+  #pyHint { margin:8px 12px; font-size:12px; color:#718096; line-height:1.5; }
+  #pyHint code { background:#edf2f7; padding:1px 5px; border-radius:4px;
+                 font-family:monospace; color:#2b6cb0; }
+  #pyArea { flex:1; margin:0 12px 12px; font-family:monospace; font-size:13px;
+            line-height:1.5; white-space:pre; overflow:auto; background:#1a202c;
+            color:#e2e8f0; padding:12px; border-radius:6px; border:0;
+            resize:none; tab-size:4; }
+</style>
+</head>
+<body>
+<div id="top">
+  <h1 id="appTitle">⚽ AI Football</h1>
+  <div class="menu">
+    <button id="fileMenuBtn" class="ghost" onclick="toggleMenu('fileMenu',event)">📁 파일 ▾</button>
+    <div class="menu-list" id="fileMenu">
+      <button id="loadBtn" onclick="closeMenus();loadProject()">작업 불러오기</button>
+      <button id="saveBtn" onclick="closeMenus();saveProject()">작업 저장</button>
+      <button id="submitFileBtn" onclick="closeMenus();webSubmitFile()" style="display:none">📤 players.py 직접 제출</button>
+    </div>
+  </div>
+  <button id="codeViewBtn" class="ghost" onclick="showFullCode()"
+          title="완성된 players.py 전체 코드 보기 · 편집기로 열기">📄 코드 보기</button>
+  <select id="divSel" title="구분 (주니어/시니어)"
+          style="display:none;font-size:13px;padding:7px 8px;border:1px solid #cbd5e0;border-radius:6px;">
+    <option value="주니어">주니어</option>
+    <option value="시니어">시니어</option>
+  </select>
+  <input id="ctrlName" type="text" value="player_myteam"
+         title="컨트롤러 이름 (폴더명=파일명)"
+         style="font-size:13px;padding:7px 10px;border:1px solid #cbd5e0;border-radius:6px;width:150px;">
+  <button id="savePlayerBtn" class="primary" onclick="savePlayer()">Webots에 저장</button>
+  <button id="submitBtn" class="primary" onclick="webSubmit()" style="display:none">📤 제출</button>
+  <div class="menu right">
+    <button id="setMenuBtn" class="ghost" onclick="toggleMenu('setMenu',event)">⚙️ 설정 ▾</button>
+    <div class="menu-list" id="setMenu">
+      <button id="langBtn" onclick="closeMenus();toggleLang()">English</button>
+      <button id="modeBtn" onclick="closeMenus();toggleMode()">✏️ 파이썬 모드로</button>
+      <button id="prepBtn" onclick="closeMenus();prepareWebots()">🔧 Webots 준비</button>
+      <button id="licBtn" onclick="closeMenus();openLicModal()">🔑 라이센스</button>
+      <button id="pathBtn" onclick="closeMenus();changeSavePath()">📁 저장 위치</button>
+      <button id="tourBtn" onclick="closeMenus();tourStart()">❓ 둘러보기</button>
+    </div>
+  </div>
+</div>
+<div id="saveResult" onclick="this.style.display='none'"></div>
+<div id="main">
+  <div id="blkEditor">
+    <div id="blkTabs">
+      <button class="pytab active" data-blk="common" onclick="switchBlkTab('common')">공통</button>
+      <button class="pytab" data-blk="GK" onclick="switchBlkTab('GK')">골키퍼(GK)</button>
+      <button class="pytab" data-blk="D1" onclick="switchBlkTab('D1')">수비수1(D1)</button>
+      <button class="pytab" data-blk="D2" onclick="switchBlkTab('D2')">수비수2(D2)</button>
+      <button class="pytab" data-blk="F1" onclick="switchBlkTab('F1')">공격수1(F1)</button>
+      <button class="pytab" data-blk="F2" onclick="switchBlkTab('F2')">공격수2(F2)</button>
+    </div>
+    <div id="blocklyDiv"></div>
+  </div>
+  <div id="pyEditor" style="display:none;">
+    <div id="pyTabs">
+      <button class="pytab active" data-role="common" onclick="switchPyTab('common')">공통</button>
+      <button class="pytab" data-role="GK" onclick="switchPyTab('GK')">골키퍼(GK)</button>
+      <button class="pytab" data-role="D1" onclick="switchPyTab('D1')">수비수1(D1)</button>
+      <button class="pytab" data-role="D2" onclick="switchPyTab('D2')">수비수2(D2)</button>
+      <button class="pytab" data-role="F1" onclick="switchPyTab('F1')">공격수1(F1)</button>
+      <button class="pytab" data-role="F2" onclick="switchPyTab('F2')">공격수2(F2)</button>
+    </div>
+    <p id="pyHint"></p>
+    <textarea id="pyArea" spellcheck="false"></textarea>
+  </div>
+  <div id="side">
+    <h2 id="sideTitle">생성된 파이썬 코드</h2>
+    <pre id="code"></pre>
+    <div id="status"></div>
+  </div>
+</div>
+
+<!-- 첫 실행 가이드 투어 (각 버튼을 하나씩 짚어줌) -->
+<div id="tour" style="display:none;position:fixed;inset:0;z-index:5000;pointer-events:none;">
+  <div id="tourSpot" style="position:absolute;border:2px solid #fff;border-radius:8px;
+       box-shadow:0 0 0 9999px rgba(0,0,0,.55);transition:all .2s ease;"></div>
+  <div id="tourTip" style="position:absolute;width:300px;box-sizing:border-box;background:#fff;color:#1a202c;
+       border-radius:12px;padding:14px 16px;box-shadow:0 14px 34px rgba(0,0,0,.45);pointer-events:auto;
+       font-size:14px;line-height:1.55;transition:all .18s ease;">
+    <div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:12px;">
+      <div style="font-size:30px;line-height:1;flex-shrink:0;">⚽</div>
+      <div style="min-width:0;">
+        <div id="tourName" style="font-weight:700;font-size:13px;color:#2b6cb0;margin-bottom:3px;">Football Bot</div>
+        <div id="tourText"></div>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <span id="tourStep" style="color:#a0aec0;font-size:12px;"></span>
+      <span style="display:flex;gap:6px;">
+        <button id="tourSkipBtn" onclick="tourSkip()" style="background:#e2e8f0;color:#2d3748;padding:6px 10px;">건너뛰기</button>
+        <button id="tourPrevBtn" onclick="tourPrev()" style="background:#e2e8f0;color:#2d3748;padding:6px 10px;">이전</button>
+        <button id="tourNextBtn" onclick="tourNext()" class="primary" style="padding:6px 12px;">다음</button>
+      </span>
+    </div>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:12px;color:#718096;cursor:pointer;">
+      <input type="checkbox" id="tourDontShow" checked>
+      <span id="tourDontShowLbl">다시 보지 않기</span>
+    </label>
+  </div>
+</div>
+
+<div id="codeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;padding:24px;box-sizing:border-box;">
+  <div style="background:#1a202c;height:100%;border-radius:10px;display:flex;flex-direction:column;overflow:hidden;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #2d3748;color:#e2e8f0;">
+      <b id="modalTitle" style="font-size:15px;"></b>
+      <span style="display:flex;gap:8px;">
+        <button onclick="openFullCode()" style="background:#2d3748;color:#e2e8f0;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:14px;">🖥️ 편집기로</button>
+        <button onclick="closeCodeModal()" style="background:#2d3748;color:#e2e8f0;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:14px;">✕</button>
+      </span>
+    </div>
+    <pre id="modalCode" style="flex:1;overflow:auto;margin:0;padding:16px;color:#e2e8f0;font-family:monospace;font-size:15px;line-height:1.5;white-space:pre;"></pre>
+  </div>
+</div>
+
+<div id="licModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;padding:24px;box-sizing:border-box;">
+  <div style="background:#fff;max-width:640px;margin:30px auto;border-radius:10px;padding:20px;font-size:14px;">
+    <h3 id="licTitle" style="margin:0 0 12px;"></h3>
+    <div style="font-size:13px;color:#555;margin-bottom:6px;">이 PC의 MAC (발급기의 MAC Address 에 입력):</div>
+    <div id="licMacBox" style="background:#f0f4f8;border-radius:6px;padding:10px;margin-bottom:12px;font-family:monospace;white-space:pre-wrap;font-size:13px;">…</div>
+    <p id="licHint" style="color:#555;margin:0 0 12px;font-size:13px;"></p>
+    <button id="licLoadBtn" class="ghost" onclick="loadLicenseFile()" style="width:100%;margin-bottom:12px;"></button>
+    <label style="display:block;margin-bottom:4px;">Email</label>
+    <input id="licEmail" style="width:100%;padding:8px;box-sizing:border-box;margin-bottom:10px;border:1px solid #cbd5e0;border-radius:6px;">
+    <button id="licFetchBtn" class="ghost" onclick="fetchLicenseOnline()" style="width:100%;margin-bottom:12px;"></button>
+    <label style="display:block;margin-bottom:4px;">Signature</label>
+    <input id="licSig" style="width:100%;padding:8px;box-sizing:border-box;margin-bottom:12px;border:1px solid #cbd5e0;border-radius:6px;">
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button id="licCloseBtn" class="ghost" onclick="closeLicModal()"></button>
+      <button id="licApplyBtn" class="primary" onclick="applyLicense()"></button>
+    </div>
+    <div id="licStatus" style="margin-top:10px;color:#2b6cb0;font-size:13px;"></div>
+  </div>
+</div>
+
+<!-- 제출 주소 설정(웹앱 전용). 배포 시 submit_config.js 안의 SUBMIT_URL 한 줄만 교체.
+     데스크톱 앱에는 이 파일이 없어 404(무해) → SUBMIT_URL 은 아래 기본값 "" 로 남는다. -->
+<script src="submit_config.js"></script>
+<script>window.SUBMIT_URL = window.SUBMIT_URL || "";</script>
+
+<script>
+// =====================================================================
+//  다국어(한국어/영어) 자료 — 화면 텍스트·툴박스·블럭 라벨을 한곳에 모은다.
+//  블럭↔RobotAI 대응(생성기)은 언어와 무관하므로 아래 생성기는 한 번만 정의한다.
+// =====================================================================
+let LANG = 'ko';   // 기본 한국어
+
+// 표준 Blockly 블럭/문맥메뉴 메시지 테이블 (head 에서 스냅샷됨)
+const MSG_TABLE = { ko: KO_MSG, en: EN_MSG };
+
+// ---- 커스텀 AI 블럭의 언어별 표시 문구 ----
+// (구조[입력·출력·색]는 buildAiBlocks 에서 고정, 텍스트만 언어별로 바꾼다.)
+const AI_TEXT = {
+  // 역할 나누기(hat)
+  ai_is_role:  {ko:"내 역할이 %1 이면",     en:"if my role is %1"},
+  ai_my_role:  {ko:"내 역할",               en:"my role"},
+  // 정보(값)
+  ai_ball_x:      {ko:"공의 X 위치",          en:"ball X"},
+  ai_ball_y:      {ko:"공의 Y 위치",          en:"ball Y"},
+  ai_my_x:        {ko:"내 X 위치",            en:"my X"},
+  ai_my_y:        {ko:"내 Y 위치",            en:"my Y"},
+  ai_kickoff_variant:{ko:"킥오프 순번(0·1·2)", en:"kickoff turn (0/1/2)"},
+  ai_dist_to_ball:{ko:"공까지 거리",          en:"distance to ball"},
+  ai_my_id:       {ko:"내 번호",              en:"my number"},
+  ai_pred_ball_x: {ko:"공 예측 X 위치",       en:"predicted ball X"},
+  ai_pred_ball_y: {ko:"공 예측 Y 위치",       en:"predicted ball Y"},
+  ai_opp_x:       {ko:"가까운 상대 X 위치",   en:"nearest opponent X"},
+  ai_opp_y:       {ko:"가까운 상대 Y 위치",   en:"nearest opponent Y"},
+  ai_our_goal_x:  {ko:"우리 골대 X",          en:"our goal X"},
+  ai_opp_goal_x:  {ko:"상대 골대 X",          en:"opponent goal X"},
+  ai_field_width: {ko:"필드 가로 길이",       en:"field width"},
+  ai_field_height:{ko:"필드 세로 길이",       en:"field height"},
+  ai_my_dir:      {ko:"내 방향(도)",          en:"my heading (deg)"},
+  ai_dist_to:     {ko:"( X %1 , Y %2 ) 까지 거리", en:"distance to ( X %1 , Y %2 )"},
+  ai_goal_top_y:  {ko:"우리 골대 위쪽 Y",     en:"our goal top Y"},
+  ai_goal_bottom_y:{ko:"우리 골대 아래쪽 Y",  en:"our goal bottom Y"},
+  ai_my_max_speed:{ko:"내 최대 속도",         en:"my max speed"},
+  // 판단(참/거짓)
+  ai_has_ball:        {ko:"공을 갖고 있으면",         en:"if I have the ball"},
+  ai_is_closest:      {ko:"내가 공에 제일 가까우면",  en:"if I am closest to the ball"},
+  ai_ball_in_our_field:{ko:"공이 우리 진영에 있으면", en:"if ball is in our half"},
+  ai_ball_in_opp_field:{ko:"공이 상대 진영에 있으면", en:"if ball is in opponent half"},
+  ai_ball_ahead:      {ko:"공이 나보다 앞에 있으면",  en:"if ball is ahead of me"},
+  ai_shoot_chance:    {ko:"슛 찬스가 있으면",         en:"if there is a shot chance"},
+  ai_ball_coming:     {ko:"공이 나에게 다가오면",     en:"if ball is coming toward me"},
+  ai_ball_in_kick_zone:{ko:"공이 킥 영역(내 앞)에 있으면", en:"if ball is in my kick zone (front)"},
+  ai_ball_approaching:{ko:"공이 나에게 가까워지면(거리)", en:"if ball is getting closer to me"},
+  // 동작(명령)
+  ai_go_to_ball:   {ko:"공쪽으로 이동하기",        en:"move toward ball"},
+  ai_go_to:        {ko:"X %1 Y %2 로 이동하기",    en:"move to X %1 Y %2"},
+  ai_turn_opp_goal:{ko:"상대 골대 쪽으로 돌기",    en:"turn toward opponent goal"},
+  ai_turn_to_ball: {ko:"공 쪽으로 돌기",           en:"turn toward ball"},
+  ai_shoot:        {ko:"슛하기",                   en:"shoot"},
+  ai_pass:         {ko:"패스하기",                 en:"pass"},
+  ai_dribble:      {ko:"드리블만 켜기(제자리)",       en:"dribble only (in place)"},
+  ai_jump:         {ko:"점프하기",                 en:"jump"},
+  ai_stop:         {ko:"그 자리에 멈추기",         en:"stop here"},
+  ai_cross:        {ko:"크로스 올리기",            en:"cross"},
+  ai_turn_to_angle:{ko:"%1 도 방향으로 돌기",      en:"turn to %1 degrees"},
+  ai_turn_to_point:{ko:"( X %1 , Y %2 ) 바라보기", en:"face ( X %1 , Y %2 )"},
+  ai_kick_power:   {ko:"세기 %1 각도 %2 로 차기",  en:"kick with power %1 angle %2"},
+  ai_jump_power:   {ko:"점프 세기 %1 로",          en:"jump with power %1"},
+  ai_gk_guard:     {ko:"골문 앞 막는 위치로 이동하기", en:"move to goal-guard position"},
+  ai_defend_pos:   {ko:"공 막는 수비 위치로 이동하기", en:"move to defensive block position"},
+  ai_go_steal:     {ko:"공 빼으러 가기(예측)",        en:"go steal the ball (intercept)"},
+  ai_is_state:     {ko:"지금 %1 이면",                en:"if the game state is %1"},
+  ai_mate_x:       {ko:"패스할 우리편 X 위치",        en:"teammate X (pass target)"},
+  ai_mate_y:       {ko:"패스할 우리편 Y 위치",        en:"teammate Y (pass target)"},
+  ai_pass_to_mate: {ko:"우리편에게 패스하기",         en:"pass to a teammate"},
+  ai_pass_to_point:{ko:"( X %1 , Y %2 ) 에게 패스하기", en:"pass to ( X %1 , Y %2 )"},
+  ai_shoot_to_point:{ko:"( X %1 , Y %2 ) 로 슛하기",   en:"shoot at ( X %1 , Y %2 )"},
+  ai_opp_has_ball: {ko:"상대가 공을 갖고 있으면",      en:"if an opponent has the ball"},
+  ai_second_half:  {ko:"지금 후반전이면",              en:"if it is the second half"},
+  ai_follow_ball:  {ko:"공에서 X %1 Y %2 만큼 떨어져 따라가기", en:"follow ball, offset X %1 Y %2"},
+  ai_slide:        {ko:"슬라이딩 태클하기",           en:"slide tackle"},
+  ai_tackle:       {ko:"공 뺏으러 달려들기",           en:"charge in to win the ball"},
+  ai_dribble_fwd:  {ko:"공 몰고 상대 진영으로 가기",   en:"dribble toward the opponent half"},
+  ai_gk_defend:    {ko:"골문으로 오는 공 막기(다이빙)", en:"save the shot (dive)"},
+  ai_shot_incoming:{ko:"우리 골로 슛이 날아오면",     en:"if a shot is coming at our goal"},
+  ai_shot_cross_y: {ko:"슛이 골라인에 닿을 Y",         en:"shot's Y at our goal line"},
+  ai_learned_shot_y:{ko:"기억한 슛 위치(평균)",        en:"learned shot Y (average)"},
+  ai_remember_shot:{ko:"슛 위치 %1 기억하기",          en:"remember shot at Y %1"},
+  ai_go_goal_line: {ko:"골라인 Y %1 에 서기",          en:"stand on goal line at Y %1"},
+  ai_shot_corner:  {ko:"슛이 구석으로 오면",            en:"if the shot is going to a corner"},
+  ai_shot_center:  {ko:"슛이 가운데로 오면",            en:"if the shot is going to the center"},
+  ai_mate_near:    {ko:"우리편이 가까이 있으면",         en:"if a teammate is near"},
+  ai_pass_near:    {ko:"가까운 우리편에게 패스하기",      en:"pass to the nearest teammate"},
+  ai_kickoff_pass: {ko:"킥오프 패스 (공격수 F1에게)",     en:"kickoff pass (to forward F1)"},
+  ai_ball_near:    {ko:"공이 가까이 있으면",             en:"if the ball is near"},
+  ai_slide_tackle: {ko:"슬라이딩 태클로 공 뺏기",        en:"slide-tackle for the ball"},
+  ai_goal_kick_far:{ko:"골킥 세게 차기 (상대 진영까지)",  en:"strong goal kick (to opponent half)"},
+  ai_penalty_save: {ko:"패널티킥 학습 방어",             en:"penalty save (learned)"},
+  ai_lob_shot:     {ko:"골키퍼 머리 위로 로빙 슛",       en:"lob shot over the keeper"},
+  // (추가) 학생 손코딩 호환 블럭
+  ai_defense_angle:{ko:"수비 각도",                   en:"defense angle"},
+  ai_attack_angle: {ko:"공격 각도",                   en:"attack angle"},
+  ai_mate_pos_x:   {ko:"우리 %1 의 X 위치",           en:"our %1 X"},
+  ai_mate_pos_y:   {ko:"우리 %1 의 Y 위치",           en:"our %1 Y"},
+  ai_opp_pos_x:    {ko:"상대 %1 의 X 위치",           en:"opponent %1 X"},
+  ai_opp_pos_y:    {ko:"상대 %1 의 Y 위치",           en:"opponent %1 Y"},
+  ai_ball_z:       {ko:"공 높이(Z)",                  en:"ball height (Z)"},
+  ai_ball_speed:   {ko:"공 속도",                     en:"ball speed"},
+  ai_i_touched_ball:{ko:"내가 공을 건드렸으면",        en:"if I touched the ball"},
+  ai_ball_in_our_penalty:{ko:"공이 우리 페널티구역에 있으면", en:"if ball is in our penalty area"},
+  ai_ball_in_opp_penalty:{ko:"공이 상대 페널티구역에 있으면", en:"if ball is in opponent penalty area"},
+  ai_ball_in_our_goal_area:{ko:"공이 우리 골에어리어에 있으면", en:"if ball is in our goal area"},
+  ai_ball_in_opp_goal_area:{ko:"공이 상대 골에어리어에 있으면", en:"if ball is in opponent goal area"},
+  ai_facing_ball:  {ko:"공 쪽을 바라보고 있으면",      en:"if I am facing the ball"},
+  ai_facing_goal:  {ko:"상대 골 쪽을 바라보고 있으면",  en:"if I am facing the opponent goal"},
+  ai_move_right:   {ko:"오른쪽으로 옆이동하기",        en:"side-step right"},
+  ai_move_left:    {ko:"왼쪽으로 옆이동하기",          en:"side-step left"}
+};
+// ai_is_role 드롭다운 옵션(값은 GK/DF/FW 로 고정, 라벨만 언어별)
+const ROLE_OPTS = {
+  ko: [["골키퍼","GK"],["수비수","DF"],["공격수","FW"]],
+  en: [["Goalkeeper","GK"],["Defender","DF"],["Forward","FW"]]
+};
+// ai_is_state 드롭다운 옵션(값 고정, 라벨만 언어별). participant.py 의 game_state 와 대응.
+const STATE_OPTS = {
+  ko: [["일반 플레이","DEFAULT"],["킥오프","KICKOFF"],["골킥","GOALKICK"],
+       ["코너킥","CORNERKICK"],["페널티킥","PENALTYKICK"]],
+  en: [["normal play","DEFAULT"],["kickoff","KICKOFF"],["goal kick","GOALKICK"],
+       ["corner kick","CORNERKICK"],["penalty kick","PENALTYKICK"]]
+};
+// 우리편 5명 역할 선택(값=로봇 번호 0~4). 학생들이 cur_posture[0..4] 로 지목하던 것과 대응.
+const MATE_OPTS = {
+  ko: [["골키퍼","0"],["수비수1","1"],["수비수2","2"],["공격수1","3"],["공격수2","4"]],
+  en: [["Goalkeeper","0"],["Defender 1","1"],["Defender 2","2"],["Forward 1","3"],["Forward 2","4"]]
+};
+// 상대 5명 선택(값=인덱스 0~4). cur_posture_opp[0..4] 에 대응(0=상대 골키퍼).
+const OPP_OPTS = {
+  ko: [["골키퍼","0"],["1번","1"],["2번","2"],["3번","3"],["4번","4"]],
+  en: [["Goalkeeper","0"],["#1","1"],["#2","2"],["#3","3"],["#4","4"]]
+};
+
+function txt(type){ return AI_TEXT[type][LANG]; }
+
+// 블럭 설명(툴팁). AI_TEXT 키 개수(정합성 4집합)를 건드리지 않도록 따로 둔다.
+// 학생이 가장 자주 헷갈리는 '드리블하기'(제자리) ↔ '공 몰고 상대 진영으로 가기'(전진) 구분용.
+const TIP = {
+  ko: {
+    ai_dribble:     "공을 붙잡는 드리블만 켭니다. 제자리예요 — 바퀴를 안 움직입니다.\n앞으로 몰고 가려면 '공 몰고 상대 진영으로 가기' 블럭을 쓰세요.",
+    ai_dribble_fwd: "상대 골 쪽으로 방향을 돌려 공을 몰고 '전진'합니다(상대도 피함).\n이게 실제로 움직이는 드리블이에요.",
+  },
+  en: {
+    ai_dribble:     "Turns on the dribble roller only. It stays in place — the wheels do not move.\nTo carry the ball forward, use the 'dribble toward the opponent half' block.",
+    ai_dribble_fwd: "Turns toward the opponent goal and drives forward with the ball (also avoids opponents).\nThis is the dribble that actually moves.",
+  },
+};
+function tip(type){ return (TIP[LANG] && TIP[LANG][type]) || ""; }
+
+// 커스텀 블럭 정의 배열을 현재 언어로 만든다(텍스트만 언어별, 구조는 고정).
+function buildAiBlocks() {
+  return [
+    {"type":"ai_is_role","message0":txt("ai_is_role"),
+       "args0":[{"type":"field_dropdown","name":"R","options":ROLE_OPTS[LANG]}],
+       "output":"Boolean","colour":290},
+    {"type":"ai_my_role","message0":txt("ai_my_role"),"output":"String","colour":230},
+    // 정보(값)
+    {"type":"ai_ball_x","message0":txt("ai_ball_x"),"output":"Number","colour":230},
+    {"type":"ai_ball_y","message0":txt("ai_ball_y"),"output":"Number","colour":230},
+    {"type":"ai_my_x","message0":txt("ai_my_x"),"output":"Number","colour":230},
+    {"type":"ai_my_y","message0":txt("ai_my_y"),"output":"Number","colour":230},
+    {"type":"ai_kickoff_variant","message0":txt("ai_kickoff_variant"),"output":"Number","colour":230},
+    {"type":"ai_dist_to_ball","message0":txt("ai_dist_to_ball"),"output":"Number","colour":230},
+    {"type":"ai_my_id","message0":txt("ai_my_id"),"output":"Number","colour":230},
+    {"type":"ai_pred_ball_x","message0":txt("ai_pred_ball_x"),"output":"Number","colour":230},
+    {"type":"ai_pred_ball_y","message0":txt("ai_pred_ball_y"),"output":"Number","colour":230},
+    {"type":"ai_opp_x","message0":txt("ai_opp_x"),"output":"Number","colour":230},
+    {"type":"ai_opp_y","message0":txt("ai_opp_y"),"output":"Number","colour":230},
+    {"type":"ai_our_goal_x","message0":txt("ai_our_goal_x"),"output":"Number","colour":230},
+    {"type":"ai_opp_goal_x","message0":txt("ai_opp_goal_x"),"output":"Number","colour":230},
+    {"type":"ai_field_width","message0":txt("ai_field_width"),"output":"Number","colour":230},
+    {"type":"ai_field_height","message0":txt("ai_field_height"),"output":"Number","colour":230},
+    {"type":"ai_my_dir","message0":txt("ai_my_dir"),"output":"Number","colour":230},
+    {"type":"ai_dist_to","message0":txt("ai_dist_to"),
+       "args0":[{"type":"input_value","name":"X","check":"Number"},
+                {"type":"input_value","name":"Y","check":"Number"}],
+       "inputsInline":true,"output":"Number","colour":230},
+    {"type":"ai_goal_top_y","message0":txt("ai_goal_top_y"),"output":"Number","colour":230},
+    {"type":"ai_goal_bottom_y","message0":txt("ai_goal_bottom_y"),"output":"Number","colour":230},
+    {"type":"ai_my_max_speed","message0":txt("ai_my_max_speed"),"output":"Number","colour":230},
+    {"type":"ai_mate_x","message0":txt("ai_mate_x"),"output":"Number","colour":230},
+    {"type":"ai_mate_y","message0":txt("ai_mate_y"),"output":"Number","colour":230},
+    // (추가) 각도 · 동료/상대 지목 · 공 높이/속도
+    {"type":"ai_defense_angle","message0":txt("ai_defense_angle"),"output":"Number","colour":230},
+    {"type":"ai_attack_angle","message0":txt("ai_attack_angle"),"output":"Number","colour":230},
+    {"type":"ai_mate_pos_x","message0":txt("ai_mate_pos_x"),
+       "args0":[{"type":"field_dropdown","name":"W","options":MATE_OPTS[LANG]}],
+       "output":"Number","colour":230},
+    {"type":"ai_mate_pos_y","message0":txt("ai_mate_pos_y"),
+       "args0":[{"type":"field_dropdown","name":"W","options":MATE_OPTS[LANG]}],
+       "output":"Number","colour":230},
+    {"type":"ai_opp_pos_x","message0":txt("ai_opp_pos_x"),
+       "args0":[{"type":"field_dropdown","name":"W","options":OPP_OPTS[LANG]}],
+       "output":"Number","colour":230},
+    {"type":"ai_opp_pos_y","message0":txt("ai_opp_pos_y"),
+       "args0":[{"type":"field_dropdown","name":"W","options":OPP_OPTS[LANG]}],
+       "output":"Number","colour":230},
+    {"type":"ai_ball_z","message0":txt("ai_ball_z"),"output":"Number","colour":230},
+    {"type":"ai_ball_speed","message0":txt("ai_ball_speed"),"output":"Number","colour":230},
+    // 판단(참/거짓)
+    {"type":"ai_has_ball","message0":txt("ai_has_ball"),"output":"Boolean","colour":120},
+    {"type":"ai_is_closest","message0":txt("ai_is_closest"),"output":"Boolean","colour":120},
+    {"type":"ai_ball_in_our_field","message0":txt("ai_ball_in_our_field"),"output":"Boolean","colour":120},
+    {"type":"ai_ball_in_opp_field","message0":txt("ai_ball_in_opp_field"),"output":"Boolean","colour":120},
+    {"type":"ai_ball_ahead","message0":txt("ai_ball_ahead"),"output":"Boolean","colour":120},
+    {"type":"ai_shoot_chance","message0":txt("ai_shoot_chance"),"output":"Boolean","colour":120},
+    {"type":"ai_ball_coming","message0":txt("ai_ball_coming"),"output":"Boolean","colour":120},
+    {"type":"ai_ball_in_kick_zone","message0":txt("ai_ball_in_kick_zone"),"output":"Boolean","colour":120},
+    {"type":"ai_ball_approaching","message0":txt("ai_ball_approaching"),"output":"Boolean","colour":120},
+    {"type":"ai_is_state","message0":txt("ai_is_state"),
+       "args0":[{"type":"field_dropdown","name":"S","options":STATE_OPTS[LANG]}],
+       "output":"Boolean","colour":120},
+    {"type":"ai_opp_has_ball","message0":txt("ai_opp_has_ball"),"output":"Boolean","colour":120},
+    {"type":"ai_second_half","message0":txt("ai_second_half"),"output":"Boolean","colour":120},
+    // (추가) 구역 판정 · 터치
+    {"type":"ai_ball_in_our_penalty","message0":txt("ai_ball_in_our_penalty"),"output":"Boolean","colour":120},
+    {"type":"ai_ball_in_opp_penalty","message0":txt("ai_ball_in_opp_penalty"),"output":"Boolean","colour":120},
+    {"type":"ai_ball_in_our_goal_area","message0":txt("ai_ball_in_our_goal_area"),"output":"Boolean","colour":120},
+    {"type":"ai_ball_in_opp_goal_area","message0":txt("ai_ball_in_opp_goal_area"),"output":"Boolean","colour":120},
+    {"type":"ai_i_touched_ball","message0":txt("ai_i_touched_ball"),"output":"Boolean","colour":120},
+    {"type":"ai_facing_ball","message0":txt("ai_facing_ball"),"output":"Boolean","colour":120},
+    {"type":"ai_facing_goal","message0":txt("ai_facing_goal"),"output":"Boolean","colour":120},
+    // 동작(명령)
+    {"type":"ai_go_to_ball","message0":txt("ai_go_to_ball"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_go_to","message0":txt("ai_go_to"),
+       "args0":[{"type":"input_value","name":"XX","check":"Number"},
+                {"type":"input_value","name":"YY","check":"Number"}],
+       "inputsInline":true,"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_turn_opp_goal","message0":txt("ai_turn_opp_goal"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_turn_to_ball","message0":txt("ai_turn_to_ball"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_shoot","message0":txt("ai_shoot"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_pass","message0":txt("ai_pass"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_dribble","message0":txt("ai_dribble"),"previousStatement":null,"nextStatement":null,"colour":20,"tooltip":tip("ai_dribble")},
+    {"type":"ai_jump","message0":txt("ai_jump"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_stop","message0":txt("ai_stop"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_cross","message0":txt("ai_cross"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_turn_to_angle","message0":txt("ai_turn_to_angle"),
+       "args0":[{"type":"input_value","name":"DEG","check":"Number"}],
+       "inputsInline":true,"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_turn_to_point","message0":txt("ai_turn_to_point"),
+       "args0":[{"type":"input_value","name":"X","check":"Number"},
+                {"type":"input_value","name":"Y","check":"Number"}],
+       "inputsInline":true,"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_kick_power","message0":txt("ai_kick_power"),
+       "args0":[{"type":"input_value","name":"PW","check":"Number"},
+                {"type":"input_value","name":"AG","check":"Number"}],
+       "inputsInline":true,"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_jump_power","message0":txt("ai_jump_power"),
+       "args0":[{"type":"input_value","name":"S","check":"Number"}],
+       "inputsInline":true,"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_gk_guard","message0":txt("ai_gk_guard"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_defend_pos","message0":txt("ai_defend_pos"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_go_steal","message0":txt("ai_go_steal"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_pass_to_mate","message0":txt("ai_pass_to_mate"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_pass_to_point","message0":txt("ai_pass_to_point"),
+       "args0":[{"type":"input_value","name":"X","check":"Number"},
+                {"type":"input_value","name":"Y","check":"Number"}],
+       "inputsInline":true,"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_shoot_to_point","message0":txt("ai_shoot_to_point"),
+       "args0":[{"type":"input_value","name":"X","check":"Number"},
+                {"type":"input_value","name":"Y","check":"Number"}],
+       "inputsInline":true,"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_tackle","message0":txt("ai_tackle"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_dribble_fwd","message0":txt("ai_dribble_fwd"),"previousStatement":null,"nextStatement":null,"colour":20,"tooltip":tip("ai_dribble_fwd")},
+    {"type":"ai_gk_defend","message0":txt("ai_gk_defend"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_shot_incoming","message0":txt("ai_shot_incoming"),"output":"Boolean","colour":120},
+    {"type":"ai_shot_cross_y","message0":txt("ai_shot_cross_y"),"output":"Number","colour":230},
+    {"type":"ai_learned_shot_y","message0":txt("ai_learned_shot_y"),"output":"Number","colour":230},
+    {"type":"ai_remember_shot","message0":txt("ai_remember_shot"),
+       "args0":[{"type":"input_value","name":"Y","check":"Number"}],
+       "inputsInline":true,"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_go_goal_line","message0":txt("ai_go_goal_line"),
+       "args0":[{"type":"input_value","name":"YY","check":"Number"}],
+       "inputsInline":true,"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_shot_corner","message0":txt("ai_shot_corner"),"output":"Boolean","colour":120},
+    {"type":"ai_shot_center","message0":txt("ai_shot_center"),"output":"Boolean","colour":120},
+    {"type":"ai_mate_near","message0":txt("ai_mate_near"),"output":"Boolean","colour":120},
+    {"type":"ai_pass_near","message0":txt("ai_pass_near"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_kickoff_pass","message0":txt("ai_kickoff_pass"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_ball_near","message0":txt("ai_ball_near"),"output":"Boolean","colour":120},
+    {"type":"ai_slide_tackle","message0":txt("ai_slide_tackle"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_goal_kick_far","message0":txt("ai_goal_kick_far"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_penalty_save","message0":txt("ai_penalty_save"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_lob_shot","message0":txt("ai_lob_shot"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_follow_ball","message0":txt("ai_follow_ball"),
+       "args0":[{"type":"input_value","name":"DX","check":"Number"},
+                {"type":"input_value","name":"DY","check":"Number"}],
+       "inputsInline":true,"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_slide","message0":txt("ai_slide"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_move_right","message0":txt("ai_move_right"),"previousStatement":null,"nextStatement":null,"colour":20},
+    {"type":"ai_move_left","message0":txt("ai_move_left"),"previousStatement":null,"nextStatement":null,"colour":20}
+  ];
+}
+
+// ---- 파이썬 코드 생성기 (언어 무관 — 한 번만 정의) ----
+const P = Blockly.Python;
+const A = P.ORDER_ATOMIC;
+P['ai_is_role'] = (b) => ["(ai.role == '" + b.getFieldValue('R') + "')", A];
+P['ai_my_role'] = () => ['ai.role', A];
+P['ai_ball_x'] = () => ['ai.ball_x', A];
+P['ai_ball_y'] = () => ['ai.ball_y', A];
+P['ai_my_x']   = () => ['ai.my_x', A];
+P['ai_my_y']   = () => ['ai.my_y', A];
+P['ai_kickoff_variant'] = () => ['ai.kickoff_variant', A];
+P['ai_dist_to_ball'] = () => ['ai.dist_to_ball', A];
+P['ai_my_id'] = () => ['ai.my_id', A];
+P['ai_pred_ball_x'] = () => ['ai.pred_ball_x', A];
+P['ai_pred_ball_y'] = () => ['ai.pred_ball_y', A];
+P['ai_opp_x'] = () => ['ai.opp_x', A];
+P['ai_opp_y'] = () => ['ai.opp_y', A];
+P['ai_our_goal_x'] = () => ['ai.our_goal_x', A];
+P['ai_opp_goal_x'] = () => ['ai.opp_goal_x', A];
+P['ai_field_width'] = () => ['ai.field_width', A];
+P['ai_field_height'] = () => ['ai.field_height', A];
+P['ai_has_ball'] = () => ['ai.has_ball', A];
+P['ai_is_closest'] = () => ['ai.is_closest', A];
+P['ai_ball_in_our_field'] = () => ['ai.ball_in_our_field', A];
+P['ai_ball_in_opp_field'] = () => ['ai.ball_in_opp_field', A];
+P['ai_ball_ahead'] = () => ['ai.ball_ahead', A];
+P['ai_shoot_chance'] = () => ['ai.shoot_chance', A];
+P['ai_go_to_ball'] = () => 'ai.go_to_ball()\n';
+P['ai_go_to'] = (b) => {
+  const x = P.valueToCode(b, 'XX', P.ORDER_NONE) || '0';
+  const y = P.valueToCode(b, 'YY', P.ORDER_NONE) || '0';
+  return 'ai.go_to(' + x + ', ' + y + ')\n';
+};
+P['ai_turn_opp_goal'] = () => 'ai.turn_to(ai.opp_goal_x, 0)\n';
+P['ai_turn_to_ball'] = () => 'ai.turn_to_ball()\n';
+P['ai_shoot'] = () => 'ai.shoot()\n';
+P['ai_pass'] = () => 'ai.pass_ball()\n';
+P['ai_dribble'] = () => 'ai.dribble()\n';
+P['ai_jump'] = () => 'ai.jump()\n';
+P['ai_stop'] = () => 'ai.stop()\n';
+P['ai_my_dir'] = () => ['ai.my_dir_deg', A];
+P['ai_goal_top_y'] = () => ['ai.goal_top_y', A];
+P['ai_goal_bottom_y'] = () => ['ai.goal_bottom_y', A];
+P['ai_dist_to'] = (b) => {
+  const x = P.valueToCode(b,'X',P.ORDER_NONE) || '0';
+  const y = P.valueToCode(b,'Y',P.ORDER_NONE) || '0';
+  return ['ai.dist_to(' + x + ', ' + y + ')', A];
+};
+P['ai_ball_coming'] = () => ['ai.ball_coming', A];
+P['ai_cross'] = () => 'ai.high_kick()\n';
+P['ai_turn_to_angle'] = (b) => {
+  const d = P.valueToCode(b,'DEG',P.ORDER_NONE) || '0';
+  return 'ai.turn_to_angle(' + d + ')\n';
+};
+P['ai_turn_to_point'] = (b) => {
+  const x = P.valueToCode(b,'X',P.ORDER_NONE) || '0';
+  const y = P.valueToCode(b,'Y',P.ORDER_NONE) || '0';
+  return 'ai.turn_to(' + x + ', ' + y + ')\n';
+};
+// 물리 블럭
+P['ai_my_max_speed'] = () => ['ai.my_max_speed', A];
+P['ai_ball_in_kick_zone'] = () => ['ai.ball_in_kick_zone', A];
+P['ai_kick_power'] = (b) => {
+  const p = P.valueToCode(b,'PW',P.ORDER_NONE) || '0';
+  const a = P.valueToCode(b,'AG',P.ORDER_NONE) || '0';
+  return 'ai.kick_power(' + p + ', ' + a + ')\n';
+};
+P['ai_jump_power'] = (b) => {
+  const s = P.valueToCode(b,'S',P.ORDER_NONE) || '0';
+  return 'ai.jump_power(' + s + ')\n';
+};
+P['ai_ball_approaching'] = () => ['ai.ball_approaching', A];
+P['ai_is_state'] = (b) => ["ai.is_state('" + b.getFieldValue('S') + "')", A];
+P['ai_opp_has_ball'] = () => ['ai.opp_has_ball', A];
+P['ai_second_half'] = () => ['ai.second_half', A];
+P['ai_tackle'] = () => 'ai.tackle()\n';
+P['ai_dribble_fwd'] = () => 'ai.dribble_forward()\n';
+P['ai_gk_defend'] = () => 'ai.defend_ball()\n';
+P['ai_shot_incoming'] = () => ['ai.shot_incoming', A];
+P['ai_shot_cross_y'] = () => ['ai.shot_cross_y', A];
+P['ai_learned_shot_y'] = () => ['ai.learned_shot_y', A];
+P['ai_remember_shot'] = (b) => 'ai.remember_shot(' + (P.valueToCode(b,'Y',P.ORDER_NONE)||'0') + ')\n';
+P['ai_go_goal_line'] = (b) => 'ai.go_goal_line(' + (P.valueToCode(b,'YY',P.ORDER_NONE)||'0') + ')\n';
+P['ai_shot_corner'] = () => ['ai.shot_corner', A];
+P['ai_shot_center'] = () => ['ai.shot_center', A];
+P['ai_mate_near'] = () => ['ai.mate_near', A];
+P['ai_pass_near'] = () => 'ai.pass_near()\n';
+P['ai_kickoff_pass'] = () => 'ai.kickoff_pass()\n';
+P['ai_ball_near'] = () => ['ai.ball_near', A];
+P['ai_slide_tackle'] = () => 'ai.slide_tackle()\n';
+P['ai_goal_kick_far'] = () => 'ai.goal_kick_far()\n';
+P['ai_penalty_save'] = () => 'ai.penalty_save()\n';
+P['ai_lob_shot'] = () => 'ai.lob_shot()\n';
+P['ai_mate_x'] = () => ['ai.mate_x', A];
+P['ai_mate_y'] = () => ['ai.mate_y', A];
+P['ai_pass_to_mate'] = () => 'ai.pass_to_mate()\n';
+P['ai_follow_ball'] = (b) => {
+  const x = P.valueToCode(b,'DX',P.ORDER_NONE) || '0';
+  const y = P.valueToCode(b,'DY',P.ORDER_NONE) || '0';
+  return 'ai.follow_ball(' + x + ', ' + y + ')\n';
+};
+P['ai_slide'] = () => 'ai.slide()\n';
+P['ai_pass_to_point'] = (b) => {
+  const x = P.valueToCode(b,'X',P.ORDER_NONE) || '0';
+  const y = P.valueToCode(b,'Y',P.ORDER_NONE) || '0';
+  return 'ai.pass_to(' + x + ', ' + y + ')\n';
+};
+P['ai_shoot_to_point'] = (b) => {
+  const x = P.valueToCode(b,'X',P.ORDER_NONE) || '0';
+  const y = P.valueToCode(b,'Y',P.ORDER_NONE) || '0';
+  return 'ai.shoot_to(' + x + ', ' + y + ')\n';
+};
+P['ai_gk_guard'] = () => 'ai.guard_goal()\n';
+P['ai_defend_pos'] = () => 'ai.defend_position()\n';
+P['ai_go_steal'] = () => 'ai.go_steal()\n';
+
+// (추가) 학생 손코딩 호환 블럭 생성기
+P['ai_defense_angle'] = () => ['ai.defense_angle', A];
+P['ai_attack_angle']  = () => ['ai.attack_angle', A];
+P['ai_mate_pos_x'] = (b) => ['ai.teammate_x(' + b.getFieldValue('W') + ')', A];
+P['ai_mate_pos_y'] = (b) => ['ai.teammate_y(' + b.getFieldValue('W') + ')', A];
+P['ai_opp_pos_x']  = (b) => ['ai.opponent_x(' + b.getFieldValue('W') + ')', A];
+P['ai_opp_pos_y']  = (b) => ['ai.opponent_y(' + b.getFieldValue('W') + ')', A];
+P['ai_ball_z']     = () => ['ai.ball_z', A];
+P['ai_ball_speed'] = () => ['ai.ball_speed', A];
+P['ai_i_touched_ball']       = () => ['ai.i_touched_ball', A];
+P['ai_ball_in_our_penalty']  = () => ['ai.ball_in_our_penalty', A];
+P['ai_ball_in_opp_penalty']  = () => ['ai.ball_in_opp_penalty', A];
+P['ai_ball_in_our_goal_area']= () => ['ai.ball_in_our_goal_area', A];
+P['ai_ball_in_opp_goal_area']= () => ['ai.ball_in_opp_goal_area', A];
+P['ai_facing_ball'] = () => ['ai.facing_ball', A];
+P['ai_facing_goal'] = () => ['ai.facing_goal', A];
+P['ai_move_right']  = () => 'ai.move_right()\n';
+P['ai_move_left']   = () => 'ai.move_left()\n';
+
+// ---- 무한 루프 방지: while 루프에 '프레임당 반복 상한'을 자동 삽입 ----
+// 이 도구는 매 프레임 1회 실행되는 반응형 모델이라, 게임 상태(공 위치 등)를 조건으로 한
+// while 은 프레임 안에서 조건이 안 바뀌어 무한 루프가 되기 쉽다(→ 컨트롤러가 멈추고
+// supervisor 소켓이 막혀 Webots 가 죽음). 상한을 넘으면 자동 break 로 빠져나온다.
+// (횟수가 고정된 '반복(N번)' 블럭은 이미 유한하므로 그대로 둔다.)
+const LOOP_GUARD_MAX = 1000;
+let loopSeq = 0;   // buildStrategy() 에서 생성마다 0으로 리셋 → 루프마다 고유 카운터명
+P['controls_whileUntil'] = function(block) {
+  const until = block.getFieldValue('MODE') == 'UNTIL';
+  let cond = P.valueToCode(block, 'BOOL',
+      until ? P.ORDER_LOGICAL_NOT : P.ORDER_NONE) || 'False';
+  if (until) cond = 'not ' + cond;
+  const g = '_loop_guard_' + (++loopSeq);      // 이 루프의 카운터명(먼저 확보 → 중첩도 고유)
+  const branch = P.statementToCode(block, 'DO');
+  const guard = P.INDENT + g + ' += 1\n' +
+                P.INDENT + 'if ' + g + ' > ' + LOOP_GUARD_MAX + ': break\n';
+  return g + ' = 0\n' + 'while ' + cond + ':\n' + guard + branch;
+};
+
+// ---- 툴박스(카테고리 이름·라벨)를 현재 언어로 만든다 ----
+const TB = {
+  cat_role:   {ko:"역할 나누기", en:"Roles"},
+  lbl_role:   {ko:"역할은 위쪽 탭에서 고릅니다", en:"Pick the role from the tabs above"},
+  cat_info:   {ko:"정보", en:"Info"},
+  cat_check:  {ko:"판단", en:"Checks"},
+  cat_action: {ko:"동작", en:"Actions"},
+  cat_math:   {ko:"숫자·계산", en:"Numbers & Math"},
+  cat_logic:  {ko:"논리", en:"Logic"},
+  cat_loop:   {ko:"반복", en:"Loops"},
+  cat_var:    {ko:"변수", en:"Variables"},
+  cat_func:   {ko:"함수", en:"Functions"}
+};
+function tb(k){ return TB[k][LANG]; }
+
+function buildToolbox() {
+  return `
+  <xml>
+    <category name="${tb('cat_role')}" colour="290">
+      <label text="${tb('lbl_role')}"></label>
+      <block type="ai_is_role"></block>
+    </category>
+    <category name="${tb('cat_info')}" colour="230">
+      <block type="ai_my_role"></block>
+      <block type="ai_ball_x"></block>
+      <block type="ai_ball_y"></block>
+      <block type="ai_my_x"></block>
+      <block type="ai_my_y"></block>
+      <block type="ai_kickoff_variant"></block>
+      <block type="ai_my_dir"></block>
+      <block type="ai_my_id"></block>
+      <block type="ai_dist_to_ball"></block>
+      <block type="ai_dist_to"></block>
+      <block type="ai_pred_ball_x"></block>
+      <block type="ai_pred_ball_y"></block>
+      <block type="ai_opp_x"></block>
+      <block type="ai_opp_y"></block>
+      <block type="ai_our_goal_x"></block>
+      <block type="ai_opp_goal_x"></block>
+      <block type="ai_goal_top_y"></block>
+      <block type="ai_goal_bottom_y"></block>
+      <block type="ai_field_width"></block>
+      <block type="ai_field_height"></block>
+      <block type="ai_my_max_speed"></block>
+      <block type="ai_mate_x"></block>
+      <block type="ai_mate_y"></block>
+      <block type="ai_defense_angle"></block>
+      <block type="ai_attack_angle"></block>
+      <block type="ai_mate_pos_x"></block>
+      <block type="ai_mate_pos_y"></block>
+      <block type="ai_opp_pos_x"></block>
+      <block type="ai_opp_pos_y"></block>
+      <block type="ai_ball_z"></block>
+      <block type="ai_ball_speed"></block>
+    </category>
+    <category name="${tb('cat_check')}" colour="120">
+      <block type="ai_has_ball"></block>
+      <block type="ai_is_closest"></block>
+      <block type="ai_ball_coming"></block>
+      <block type="ai_ball_in_our_field"></block>
+      <block type="ai_ball_in_opp_field"></block>
+      <block type="ai_ball_ahead"></block>
+      <block type="ai_shoot_chance"></block>
+      <block type="ai_ball_in_kick_zone"></block>
+      <block type="ai_ball_approaching"></block>
+      <block type="ai_is_state"></block>
+      <block type="ai_opp_has_ball"></block>
+      <block type="ai_ball_near"></block>
+      <block type="ai_second_half"></block>
+      <block type="ai_ball_in_our_penalty"></block>
+      <block type="ai_ball_in_opp_penalty"></block>
+      <block type="ai_ball_in_our_goal_area"></block>
+      <block type="ai_ball_in_opp_goal_area"></block>
+      <block type="ai_i_touched_ball"></block>
+      <block type="ai_facing_ball"></block>
+      <block type="ai_facing_goal"></block>
+    </category>
+    <category name="${tb('cat_action')}" colour="20">
+      <block type="ai_go_to_ball"></block>
+      <block type="ai_go_steal"></block>
+      <block type="ai_tackle"></block>
+      <block type="ai_dribble_fwd"></block>
+      <block type="ai_gk_guard"></block>
+      <block type="ai_gk_defend"></block>
+      <block type="ai_shot_incoming"></block>
+      <block type="ai_shot_cross_y"></block>
+      <block type="ai_learned_shot_y"></block>
+      <block type="ai_remember_shot"><value name="Y"><shadow type="math_number"><field name="NUM">0</field></shadow></value></block>
+      <block type="ai_go_goal_line"><value name="YY"><shadow type="math_number"><field name="NUM">0</field></shadow></value></block>
+      <block type="ai_shot_corner"></block>
+      <block type="ai_shot_center"></block>
+      <block type="ai_mate_near"></block>
+      <block type="ai_pass_near"></block>
+      <block type="ai_kickoff_pass"></block>
+      <block type="ai_slide_tackle"></block>
+      <block type="ai_goal_kick_far"></block>
+      <block type="ai_penalty_save"></block>
+      <block type="ai_lob_shot"></block>
+      <block type="ai_slide"></block>
+      <block type="ai_defend_pos"></block>
+      <block type="ai_follow_ball">
+        <value name="DX"><shadow type="math_number"><field name="NUM">-1</field></shadow></value>
+        <value name="DY"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+      </block>
+      <block type="ai_go_to">
+        <value name="XX"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+        <value name="YY"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+      </block>
+      <block type="ai_turn_to_ball"></block>
+      <block type="ai_turn_opp_goal"></block>
+      <block type="ai_turn_to_angle">
+        <value name="DEG"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+      </block>
+      <block type="ai_turn_to_point">
+        <value name="X"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+        <value name="Y"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+      </block>
+      <block type="ai_shoot"></block>
+      <block type="ai_cross"></block>
+      <block type="ai_pass"></block>
+      <block type="ai_pass_to_mate"></block>
+      <block type="ai_pass_to_point">
+        <value name="X"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+        <value name="Y"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+      </block>
+      <block type="ai_shoot_to_point">
+        <value name="X"><shadow type="math_number"><field name="NUM">4</field></shadow></value>
+        <value name="Y"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+      </block>
+      <block type="ai_kick_power">
+        <value name="PW"><shadow type="math_number"><field name="NUM">10</field></shadow></value>
+        <value name="AG"><shadow type="math_number"><field name="NUM">3</field></shadow></value>
+      </block>
+      <block type="ai_dribble"></block>
+      <block type="ai_jump"></block>
+      <block type="ai_jump_power">
+        <value name="S"><shadow type="math_number"><field name="NUM">10</field></shadow></value>
+      </block>
+      <block type="ai_move_right"></block>
+      <block type="ai_move_left"></block>
+      <block type="ai_stop"></block>
+    </category>
+    <category name="${tb('cat_math')}" colour="210">
+      <block type="math_number"><field name="NUM">0</field></block>
+      <block type="math_arithmetic">
+        <value name="A"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
+        <value name="B"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
+      </block>
+      <block type="math_single">
+        <value name="NUM"><shadow type="math_number"><field name="NUM">9</field></shadow></value>
+      </block>
+      <block type="math_number_property">
+        <value name="NUMBER_TO_CHECK"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+      </block>
+      <block type="math_round">
+        <value name="NUM"><shadow type="math_number"><field name="NUM">3.1</field></shadow></value>
+      </block>
+      <block type="math_constrain">
+        <value name="VALUE"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+        <value name="LOW"><shadow type="math_number"><field name="NUM">-1</field></shadow></value>
+        <value name="HIGH"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
+      </block>
+    </category>
+    <category name="${tb('cat_logic')}" colour="210">
+      <block type="controls_if"></block>
+      <block type="logic_compare">
+        <value name="A"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+        <value name="B"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+      </block>
+      <block type="logic_operation"></block>
+      <block type="logic_negate"></block>
+      <block type="logic_boolean"></block>
+    </category>
+    <category name="${tb('cat_loop')}" colour="120">
+      <block type="controls_repeat_ext">
+        <value name="TIMES"><shadow type="math_number"><field name="NUM">5</field></shadow></value>
+      </block>
+      <block type="controls_whileUntil"></block>
+      <block type="controls_flow_statements"></block>
+    </category>
+    <category name="${tb('cat_var')}" colour="330" custom="VARIABLE"></category>
+    <category name="${tb('cat_func')}" colour="290" custom="PROCEDURE"></category>
+  </xml>`;
+}
+
+// ---- 화면(HTML) 텍스트 언어별 문구 ----
+const UI = {
+  ko: {
+    title:"AI Football Editor",
+    appBlocks:"⚽ AI Football (블록)", appPython:"⚽ AI Football (파이썬)",
+    lang:"🌐 English",
+    toPython:"✏️ 파이썬 모드로", toBlocks:"🧩 블록 모드로",
+    load:"작업 불러오기", save:"작업 저장", preview:"코드 미리보기",
+    codeView:"📄 코드 보기", fileMenu:"📁 파일 ▾", setMenu:"⚙️ 설정 ▾",
+    tourGuide:"❓ 둘러보기", tourSkip:"그만 볼래", tourPrev:"이전", tourNext:"다음 ▶", tourDone:"시작하기! ⚽", tourName:"Football Bot", tourDontShow:"다시 보지 않기",
+    fullCode:"📄 전체 코드", fullCodeShown:"완성된 players.py 전체입니다 — 내 전략이 골격(strategy_ 함수) 안에 들어간 모습이에요.",
+    openCode:"🖥️ 크게보기",
+    prepWebots:"🔧 Webots 준비", preparing:"Webots 준비 중... (모듈 설치는 몇 분 걸릴 수 있어요)",
+    prepDone:"Webots 준비 완료 — Webots 를 껐다 켜세요", prepFail:"일부 실패 — 안내 창을 확인하세요",
+    lic:"🔑 라이센스", licTitle:"🔑 라이센스 적용", licApply:"적용", licClose:"닫기",
+    licLoad:"📁 license.json 불러오기", licLoaded:"불러왔습니다 — [적용] 을 누르세요.",
+    licFetch:"🌐 홈페이지에서 자동 가져오기", licNeedEmail:"이메일을 먼저 입력하세요.", licFetching:"홈페이지에서 가져오는 중…",
+    licHint:"이메일을 넣고 [자동 가져오기], 또는 license.json [불러오기] 후 [적용] 을 누르세요.",
+    ctrlTitle:"컨트롤러 이름 (폴더명=파일명)", savePlayer:"Webots에 저장", changePath:"📁 저장 위치",
+    sideTitle:"생성된 파이썬 코드", codePlaceholder:"// '코드 미리보기'를 누르세요",
+    tabCommon:"공통", tabGK:"골키퍼(GK)", tabD1:"수비수1(D1)", tabD2:"수비수2(D2)",
+    tabF1:"공격수1(F1)", tabF2:"공격수2(F2)",
+    pyHint:"전략 함수 본문만 작성하세요. 골격·import·저장은 도구가 자동 처리합니다.<br>예) <code>ai.go_to_ball()</code> · <code>if ai.shoot_chance: ai.shoot()</code>",
+    pyPlaceholder:"# 여기에 파이썬 전략을 작성하세요\n# 사용 가능한 명령은 오른쪽 '코드 미리보기'나 README 참고",
+    lblDefs:"[변수·함수 정의]", lblCommon:"[공통]",
+    lblGK:"골키퍼(GK)", lblDF:"수비수(DF)", lblFW:"공격수(FW)", lblCommonTab:"공통",
+    useCommon:"# (공통 전략 사용)\n", empty:"# (비어있음)\n",
+    placeBlocks:"(블럭을 배치하세요)", writePy:"(파이썬 전략을 작성하세요)",
+    needApp:"앱(app.py)에서 실행해야 저장됩니다.",
+    needAppLoad:"앱(app.py)에서 실행해야 불러올 수 있습니다.",
+    saving:"저장 중...", loadFail:"불러오기 실패: 파일 형식 오류",
+    saveOkReg:"저장 완료 — Webots 등록까지 끝났어요",
+    saveOkNoReg:"저장은 됐지만 Webots 등록이 안 됐어요 — 경기에 반영되지 않을 수 있어요",
+    saveFail:"저장 실패", saveClose:"클릭하면 닫혀요",
+    simTitle:"🎮 경기 화면", runMatch:"▶ 실행", stopMatch:"⏹ 정지",
+    simIdle:"▶ 실행을 누르면 여기에 경기 화면이 나타나요.",
+    simStarting:"경기를 준비하고 있어요… (Webots 가 켜질 때까지 잠깐만요)",
+    simStopped:"경기를 멈췄어요. 다시 보려면 ▶ 실행을 누르세요.",
+    simReloading:"코드 반영 중… (경기는 켜둔 채 새 코드로 갱신)",
+    simSaveFail:"저장에 실패해서 경기를 시작하지 못했어요:",
+    webDlOk:"players.py 생성 완료 — 다운로드했어요", webDlFail:"players.py 생성 실패",
+    webSaved:"작업을 .aisb 파일로 저장했어요(다운로드)",
+    submit:"📤 제출", webSubmitting:"제출 중…", webSubmitOk:"제출 완료!",
+    webSubmitFail:"제출 실패", webNeedName:"먼저 이름을 입력하세요(제출자 이름).",
+    webNoUrl:"제출 주소가 설정되지 않았어요(선생님께 문의).",
+    webNamePH:"이름(영문) 예) HongGilDong", webNameEnglish:"이름을 영문으로 입력하세요.",
+    submitFile:"📤 players.py 직접 제출"
+  },
+  en: {
+    title:"AI Football Editor",
+    appBlocks:"⚽ AI Football (Blocks)", appPython:"⚽ AI Football (Python)",
+    lang:"🌐 Korea (한국어)",
+    toPython:"✏️ Switch to Python", toBlocks:"🧩 Switch to Blocks",
+    load:"Open", save:"Save Work", preview:"Preview Code",
+    codeView:"📄 View Code", fileMenu:"📁 File ▾", setMenu:"⚙️ Settings ▾",
+    tourGuide:"❓ Guide", tourSkip:"Skip", tourPrev:"Back", tourNext:"Next ▶", tourDone:"Start! ⚽", tourName:"Football Bot", tourDontShow:"Don't show again",
+    fullCode:"📄 Full Code", fullCodeShown:"This is the complete players.py — your strategy sits inside the skeleton (strategy_ functions).",
+    openCode:"🖥️ Open in Editor",
+    prepWebots:"🔧 Prepare Webots", preparing:"Preparing Webots... (installing modules may take a few minutes)",
+    prepDone:"Webots ready — restart Webots", prepFail:"Some steps failed — see the dialog",
+    lic:"🔑 License", licTitle:"🔑 Apply License", licApply:"Apply", licClose:"Close",
+    licLoad:"📁 Load license.json", licLoaded:"Loaded — click Apply.",
+    licFetch:"🌐 Fetch from website", licNeedEmail:"Enter your email first.", licFetching:"Fetching from website…",
+    licHint:"Enter your email and click Fetch, or Load a license.json, then click Apply.",
+    ctrlTitle:"Controller name (folder = file name)", savePlayer:"Save to Webots", changePath:"📁 Save Folder",
+    sideTitle:"Generated Python code", codePlaceholder:"// Click 'Preview Code'",
+    tabCommon:"Common", tabGK:"Goalkeeper (GK)", tabD1:"Defender 1 (D1)", tabD2:"Defender 2 (D2)",
+    tabF1:"Forward 1 (F1)", tabF2:"Forward 2 (F2)",
+    pyHint:"Write only the strategy body. Skeleton, imports and saving are handled automatically.<br>e.g. <code>ai.go_to_ball()</code> · <code>if ai.shoot_chance: ai.shoot()</code>",
+    pyPlaceholder:"# Write your Python strategy here\n# See 'Preview Code' on the right or the README for available commands",
+    lblDefs:"[variable / function definitions]", lblCommon:"[Common]",
+    lblGK:"Goalkeeper (GK)", lblDF:"Defender (DF)", lblFW:"Forward (FW)", lblCommonTab:"Common",
+    useCommon:"# (uses common strategy)\n", empty:"# (empty)\n",
+    placeBlocks:"(place some blocks)", writePy:"(write a Python strategy)",
+    needApp:"Run inside the app (app.py) to save.",
+    needAppLoad:"Run inside the app (app.py) to open.",
+    saving:"Saving...", loadFail:"Open failed: invalid file format",
+    saveOkReg:"Saved — registered in Webots",
+    saveOkNoReg:"Saved to disk, but NOT registered in Webots — the match may not use it",
+    saveFail:"Save failed", saveClose:"Click to dismiss",
+    simTitle:"🎮 Match View", runMatch:"▶ Run", stopMatch:"⏹ Stop",
+    simIdle:"Press ▶ Run to see the match here.",
+    simStarting:"Getting the match ready… (waiting for Webots to start)",
+    simStopped:"Match stopped. Press ▶ Run to watch again.",
+    simReloading:"Applying your code… (match stays on, reloaded with new code)",
+    simSaveFail:"Couldn't start the match because saving failed:",
+    webDlOk:"players.py generated — downloaded", webDlFail:"Failed to generate players.py",
+    webSaved:"Saved your work as an .aisb file (download)",
+    submit:"📤 Submit", webSubmitting:"Submitting…", webSubmitOk:"Submitted!",
+    webSubmitFail:"Submit failed", webNeedName:"Enter your name first (submitter name).",
+    webNoUrl:"Submit URL is not set (ask your teacher).",
+    webNamePH:"Your name (English) e.g. HongGilDong", webNameEnglish:"Please enter your name in English.",
+    submitFile:"📤 Submit players.py file"
+  }
+};
+function L(k){ return UI[LANG][k]; }
+
+// =====================================================================
+//  작업 공간 / 상태
+// =====================================================================
+let workspace = null;
+let pyMode = false;
+// 역할 탭(로봇별). 블록 모드·파이썬 모드가 같은 구성을 쓴다.
+const ROLE_TABS = ['common','GK','D1','D2','F1','F2'];
+const pyText = {common:'', GK:'', D1:'', D2:'', F1:'', F2:''};   // 탭별 파이썬 원문
+// 탭별 블럭 배치(Blockly 워크스페이스 상태). 화면에는 현재 탭만 띄운다.
+const blkState = {common:null, GK:null, D1:null, D2:null, F1:null, F2:null};
+let curBlkTab = 'common';
+let curTab = 'common';        // 파이썬 모드의 현재 탭
+
+// 화면에 떠 있는 블럭 배치를 현재 탭에 저장한다(탭 전환·코드 생성 전에 호출).
+function syncBlkTab() {
+  if (workspace) blkState[curBlkTab] = Blockly.serialization.workspaces.save(workspace);
+}
+
+function switchBlkTab(role) {
+  if (!workspace || role === curBlkTab) { markBlkTab(role); return; }
+  syncBlkTab();
+  curBlkTab = role;
+  workspace.clear();
+  if (blkState[role]) {
+    try { Blockly.serialization.workspaces.load(blkState[role], workspace); } catch (e) {}
+  }
+  markBlkTab(role);
+  showCode();
+}
+
+function markBlkTab(role) {
+  document.querySelectorAll('#blkTabs button').forEach(function(t) {
+    t.classList.toggle('active', t.dataset.blk === role);
+  });
+}
+
+// 언어를 적용해 워크스페이스를 (다시) 만든다. 배치한 블럭은 보존된다.
+function applyLang() {
+  document.documentElement.lang = LANG;
+  // 1) 표준 블럭/문맥메뉴 메시지 교체
+  Object.assign(Blockly.Msg, MSG_TABLE[LANG]);
+  // 2) 커스텀 블럭 텍스트를 현재 언어로 (재)정의
+  Blockly.defineBlocksWithJsonArray(buildAiBlocks());
+  // 3) 워크스페이스 재생성(배치 보존)
+  const state = workspace ? Blockly.serialization.workspaces.save(workspace) : null;
+  if (workspace) workspace.dispose();
+  workspace = Blockly.inject('blocklyDiv', {
+    toolbox: buildToolbox(),
+    media: 'blockly/media/',
+    grid:{spacing:20,length:3,colour:'#eee',snap:true},
+    zoom:{controls:true, wheel:true},
+    trashcan:true
+  });
+  if (state) Blockly.serialization.workspaces.load(state, workspace);
+  applyUiText();
+  // 오른쪽 미리보기: 블록을 놓거나 바꿀 때마다 자동 갱신 (수동 🔄 없이 실시간)
+  workspace.addChangeListener(function(e){
+    if (pyMode || (e && e.isUiEvent)) return;
+    showCode();
+  });
+  var _pa = document.getElementById('pyArea');
+  if (_pa) _pa.addEventListener('input', function(){ if (pyMode) showCode(); });
+  showCode();
+  // 첫 실행 시 가이드 투어 자동 시작 (한 번만 — '다시 보지 않기'는 설정파일에 저장돼 재시작해도 유지)
+  maybeAutoTour();
+}
+
+// 화면(HTML) 텍스트를 현재 언어로 갱신
+// 상단 드롭다운 메뉴 열기/닫기
+function toggleMenu(id, ev) {
+  if (ev) ev.stopPropagation();
+  var m = document.getElementById(id);
+  var wasOpen = m.classList.contains('open');
+  closeMenus();
+  if (!wasOpen) {
+    // 버튼 위치를 계산해 fixed 로 배치 → 상단바 overflow 에 안 잘림
+    var r = m.previousElementSibling.getBoundingClientRect();
+    m.style.top = (r.bottom + 6) + 'px';
+    if (m.parentNode.classList.contains('right')) {
+      m.style.left = 'auto';
+      m.style.right = (window.innerWidth - r.right) + 'px';
+    } else {
+      m.style.right = 'auto';
+      m.style.left = r.left + 'px';
+    }
+    m.classList.add('open');
+  }
+}
+function closeMenus() {
+  var ls = document.querySelectorAll('.menu-list');
+  for (var i = 0; i < ls.length; i++) ls[i].classList.remove('open');
+}
+document.addEventListener('click', closeMenus);
+
+// ===== 첫 실행 가이드 투어 =====
+var TOUR = {
+  ko: [
+    {el:'appTitle',     t:'안녕! 난 Football Bot이야 ⚽ 처음이지? 나랑 같이 하나씩 둘러보자!'},
+    {el:'blkTabs',      t:'여기 탭들 보이지? 골키퍼·수비수·공격수마다 따로 작전을 짤 수 있어.'},
+    {el:'blocklyDiv',   t:'여기가 블록 놀이터야! 왼쪽에서 블록을 끌어다 붙이면 그게 코드가 돼.'},
+    {el:'side',         t:'오른쪽엔 네가 만든 게 실시간 파이썬 코드로 보여. 신기하지?'},
+    {el:'fileMenuBtn',  t:"만들다 만 건 여기 '파일'에서 저장하고, 다음에 다시 불러올 수 있어."},
+    {el:'codeViewBtn',  t:"'코드 보기'를 누르면 완성된 코드를 큰 화면으로 볼 수 있어."},
+    {el:'savePlayerBtn',t:"다 만들면 이름 정하고 'Webots에 저장'! 그럼 경기에 내보낼 준비 끝이야."},
+    {el:'setMenuBtn',   t:"언어 바꾸기·라이센스 같은 건 여기 ⚙️ 설정 안에 있어. 나 다시 부르고 싶으면 '둘러보기'! 이제 시작해볼까? ⚽"}
+  ],
+  en: [
+    {el:'appTitle',     t:"Hi! I'm Football Bot ⚽ First time here? Let's look around together!"},
+    {el:'blkTabs',      t:'See these tabs? You can plan a strategy for each role — GK, defenders, forwards.'},
+    {el:'blocklyDiv',   t:"This is your block playground! Drag blocks from the left and snap them — that's your code."},
+    {el:'side',         t:'On the right, what you build shows up as live Python code. Cool, right?'},
+    {el:'fileMenuBtn',  t:"Save your work under 'File' and open it again next time."},
+    {el:'codeViewBtn',  t:"Tap 'View Code' to see the full code on a big screen."},
+    {el:'savePlayerBtn',t:"All done? Name it and hit 'Save to Webots' — ready to play!"},
+    {el:'setMenuBtn',   t:"Language, license and more live in ⚙️ Settings. Want me again? Tap 'Guide'! Now let's start! ⚽"}
+  ]
+};
+var tourI = 0;
+// 저장된 '다시 보지 않기'(tour_done)를 기준으로 첫 실행 때만 투어를 자동으로 연다.
+// 설정파일(get_flag)을 우선 확인 — 앱을 껐다 켜도 유지된다. 웹뷰 준비 전이면 이벤트로 기다린다.
+function maybeAutoTour() {
+  var started = false;
+  function decide(done) { if (started) return; started = true; if (!done) setTimeout(tourStart, 700); }
+  function check() {
+    try {
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.get_flag) {
+        window.pywebview.api.get_flag('tour_done').then(decide).catch(function () { decide(null); });
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+  if (check()) return;
+  window.addEventListener('pywebviewready', check, { once: true });
+  // 앱이 아닌 브라우저 등에서 pywebview 가 없으면 잠시 뒤 그냥 연다
+  setTimeout(function () { if (!started && !check()) decide(null); }, 2500);
+}
+
+function tourStart() { tourI = 0; document.getElementById('tour').style.display = 'block'; tourShow(); }
+function tourShow() {
+  var steps = TOUR[LANG] || TOUR.ko;
+  var s = steps[tourI];
+  var el = document.getElementById(s.el);
+  if (!el) { if (tourI < steps.length - 1) { tourI++; tourShow(); } else tourEnd(); return; }
+  var r = el.getBoundingClientRect(), pad = 6;
+  var spot = document.getElementById('tourSpot');
+  spot.style.left = (r.left - pad) + 'px'; spot.style.top = (r.top - pad) + 'px';
+  spot.style.width = (r.width + pad * 2) + 'px'; spot.style.height = (r.height + pad * 2) + 'px';
+  document.getElementById('tourText').textContent = s.t;
+  document.getElementById('tourName').textContent = L('tourName');
+  document.getElementById('tourStep').textContent = (tourI + 1) + ' / ' + steps.length;
+  document.getElementById('tourSkipBtn').textContent = L('tourSkip');
+  document.getElementById('tourPrevBtn').textContent = L('tourPrev');
+  document.getElementById('tourNextBtn').textContent = (tourI === steps.length - 1) ? L('tourDone') : L('tourNext');
+  document.getElementById('tourPrevBtn').style.visibility = (tourI === 0) ? 'hidden' : 'visible';
+  var tip = document.getElementById('tourTip'), tipW = 300, tipH = 130;
+  var left = Math.min(Math.max(12, r.left), window.innerWidth - tipW - 12);
+  var top = (r.bottom + 12 + tipH < window.innerHeight) ? (r.bottom + 12) : Math.max(12, r.top - tipH - 12);
+  tip.style.left = left + 'px'; tip.style.top = top + 'px';
+}
+function tourNext() { var steps = TOUR[LANG] || TOUR.ko; if (tourI < steps.length - 1) { tourI++; tourShow(); } else tourEnd(); }
+function tourPrev() { if (tourI > 0) { tourI--; tourShow(); } }
+function tourSkip() { tourEnd(); }
+function tourEnd() {
+  document.getElementById('tour').style.display = 'none';
+  var box = document.getElementById('tourDontShow');
+  var val = (box && box.checked) ? '1' : '';   // 체크(기본)=다시 안 봄, 해제하면 다음에 또 봄
+  try { localStorage.setItem('ai_football_tour_done', val); } catch (e) {}
+  try {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.set_flag)
+      window.pywebview.api.set_flag('tour_done', val);   // 설정파일에 저장 → 재시작에도 유지
+  } catch (e) {}
+}
+
+function applyUiText() {
+  document.title = L('title');
+  document.getElementById('langBtn').textContent = L('lang');
+  document.getElementById('modeBtn').textContent = pyMode ? L('toBlocks') : L('toPython');
+  document.getElementById('loadBtn').textContent = L('load');
+  document.getElementById('saveBtn').textContent = L('save');
+  document.getElementById('codeViewBtn').textContent = L('codeView');
+  document.getElementById('fileMenuBtn').textContent = L('fileMenu');
+  document.getElementById('setMenuBtn').textContent = L('setMenu');
+  document.getElementById('tourBtn').textContent = L('tourGuide');
+  { const dl = document.getElementById('tourDontShowLbl'); if (dl) dl.textContent = L('tourDontShow'); }
+  document.getElementById('prepBtn').textContent = L('prepWebots');
+  document.getElementById('licBtn').textContent = L('lic');
+  document.getElementById('ctrlName').title = L('ctrlTitle');
+  document.getElementById('savePlayerBtn').textContent = L('savePlayer');
+  document.getElementById('pathBtn').textContent = L('changePath');
+  { const st = document.getElementById('sideTitle'); if (st) st.textContent = L('sideTitle'); }
+  document.getElementById('appTitle').textContent = pyMode ? L('appPython') : L('appBlocks');
+  // 두 탭 바(블록/파이썬)의 라벨을 같은 표로 채운다
+  const TAB_LABEL = {common:L('tabCommon'), GK:L('tabGK'), D1:L('tabD1'),
+                     D2:L('tabD2'), F1:L('tabF1'), F2:L('tabF2')};
+  ROLE_TABS.forEach(function(r) {
+    const b = document.querySelector('#blkTabs button[data-blk="' + r + '"]');
+    if (b) b.textContent = TAB_LABEL[r];
+    const p = document.querySelector('#pyTabs button[data-role="' + r + '"]');
+    if (p) p.textContent = TAB_LABEL[r];
+  });
+  document.getElementById('pyHint').innerHTML = L('pyHint');
+  document.getElementById('pyArea').placeholder = L('pyPlaceholder');
+}
+
+function toggleLang() {
+  if (pyMode) pyText[curTab] = document.getElementById('pyArea').value; // 편집 보존
+  LANG = (LANG === 'ko') ? 'en' : 'ko';
+  try { localStorage.setItem('ai_football_lang', LANG); } catch (e) {}
+  applyLang();
+  showCode();
+}
+
+// 탭별 블럭 배치를 각각 파이썬 코드로 바꾼다 → {common, GK, D1, D2, F1, F2, helpers}
+// (화면 워크스페이스를 건드리지 않도록 보이지 않는 workspace 에 하나씩 올려 생성한다.)
+function buildStrategy() {
+  syncBlkTab();
+  const roles = {common:'', GK:'', D1:'', D2:'', F1:'', F2:'', helpers:''};
+  const isDef = (t) => t === 'procedures_defnoreturn' || t === 'procedures_defreturn';
+  const defs = {};
+  loopSeq = 0;   // while 루프 카운터명을 _loop_guard_1 부터 다시 매김
+
+  const hw = new Blockly.Workspace();
+  ROLE_TABS.forEach(function(role) {
+    hw.clear();
+    if (blkState[role]) {
+      try { Blockly.serialization.workspaces.load(blkState[role], hw); } catch (e) { return; }
+    }
+    Blockly.Python.init(hw);
+    let code = '';
+    hw.getTopBlocks(true).forEach(function(b) {
+      if (isDef(b.type)) Blockly.Python.blockToCode(b);   // 함수 정의 → definitions_
+      else code += Blockly.Python.blockToCode(b) || '';
+    });
+    const d = Blockly.Python.definitions_ || {};
+    for (const k in d) { if (d[k] && d[k].trim()) defs[k] = d[k]; }
+    roles[role] = code;
+  });
+  hw.dispose();
+
+  const parts = [];
+  for (const k in defs) parts.push(defs[k]);
+  roles.helpers = parts.join('\n\n');
+  return roles;
+}
+
+// ===== 브라우저(웹앱) 모드: app.py 없이 JS 가 players.py 를 직접 생성 =====
+// app.py 의 generate_player_code / _normalize / _indent 를 1:1 로 포팅한 것이다.
+// (데스크톱 앱에서는 window.pywebview 가 있어 이 경로를 타지 않는다.)
+let _webTpl = null;
+async function webTemplate() {
+  if (_webTpl != null) return _webTpl;
+  const resp = await fetch('players_iro.template.txt', { cache: 'no-store' });
+  if (!resp.ok) throw new Error('template load failed (' + resp.status + ')');
+  _webTpl = await resp.text();
+  return _webTpl;
+}
+// app.py._indent: 비지 않은 줄만 width(8)칸 들여쓰기, 전체가 비면 'pass'.
+function webIndent(code, width) {
+  width = width || 8;
+  const pad = ' '.repeat(width);
+  const lines = (code || '').split('\n');
+  // 파이썬 splitlines() 처럼 '끝 개행이 만든 빈 조각' 1개만 제거(없으면 역할 코드마다 빈 줄이 하나씩 더 생김).
+  if (lines.length && lines[lines.length - 1] === '') lines.pop();
+  const body = lines.map(line => line.trim() ? pad + line : line).join('\n');
+  return body.trim() ? body : pad + 'pass';
+}
+// app.py._normalize: 개별(GK/D1/D2/F1/F2) > 그룹(DF/FW) > 공통(common).
+function webNormalize(roles) {
+  const common = roles.common || '', df = roles.DF || '', fw = roles.FW || '';
+  return {
+    GK: roles.GK || common,
+    D1: roles.D1 || df || common,
+    D2: roles.D2 || df || common,
+    F1: roles.F1 || fw || common,
+    F2: roles.F2 || fw || common,
+  };
+}
+// app.py.generate_player_code: 마커 5개 + @@HELPERS@@ 치환(문자열 split/join 으로 $ 특수문자 안전).
+function webGeneratePlayerPy(roles, tpl) {
+  const norm = webNormalize(roles);
+  const M = { GK:'# @@STRATEGY_GK@@', D1:'# @@STRATEGY_D1@@', D2:'# @@STRATEGY_D2@@',
+              F1:'# @@STRATEGY_F1@@', F2:'# @@STRATEGY_F2@@' };
+  Object.keys(M).forEach(r => { tpl = tpl.split(M[r]).join(webIndent(norm[r], 8)); });
+  const helpers = (roles.helpers || '').replace(/\s+$/, '');  // rstrip
+  tpl = tpl.split('# @@HELPERS@@').join(helpers || '');
+  return tpl;
+}
+function webDownloadText(filename, text) {
+  const blob = new Blob([text], { type: 'text/x-python;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
+// '전체 코드 보기' 전용: 설명 주석(#)·독스트링(''' """)을 걷어낸 순수 코드.
+// (데스크톱 app.py._pure_code 와 같은 목적 — 보기 전용이며, 저장/제출 파일은 원문 그대로다.)
+// 문자열 안의 # 는 주석이 아니므로 보존한다(문자열 상태를 추적하며 스캔).
+function webPureCode(src) {
+  src = String(src || '');
+  let out = '', i = 0; const n = src.length;
+  while (i < n) {
+    const c = src[i];
+    if (c === '"' || c === "'") {
+      const tq = src.substr(i, 3);
+      if (tq === '"""' || tq === "'''") {           // 삼중따옴표(독스트링) → 통째 제거
+        const close = src.indexOf(tq, i + 3);
+        i = (close === -1) ? n : close + 3;
+        continue;
+      }
+      const quote = c; out += c; i++;               // 일반 문자열 → 내용 그대로 복사
+      while (i < n) {
+        const d = src[i]; out += d; i++;
+        if (d === '\\' && i < n) { out += src[i]; i++; continue; }  // 이스케이프 보존
+        if (d === quote) break;
+      }
+      continue;
+    }
+    if (c === '#') { while (i < n && src[i] !== '\n') i++; continue; }  // 주석 → 줄 끝까지 제거
+    out += c; i++;
+  }
+  const lines = out.split('\n').map(l => l.replace(/\s+$/, ''));
+  const res = []; let blank = 0;                     // 빈 줄 2개 이상 → 1개
+  for (const ln of lines) {
+    if (ln === '') { blank++; if (blank <= 1) res.push(''); }
+    else { blank = 0; res.push(ln); }
+  }
+  return res.join('\n').replace(/^\n+/, '').replace(/\n+$/, '\n');
+}
+// 1단계: 브라우저에서 players.py 를 만들어 '다운로드'. (2단계에서 '제출'로 확장)
+async function webMakeAndDownload(roles, name, status) {
+  try {
+    status.textContent = L('saving');
+    showSaveResult('busy', L('saving'), '');
+    const tpl = await webTemplate();
+    // 제출 파일도 설명 주석·독스트링을 걷어낸 '순수 코드'로(사용자 요청). 실행 결과는 동일.
+    const code = webPureCode(webGeneratePlayerPy(roles, tpl));
+    webDownloadText('players.py', code);
+    const who = (name || 'player_myteam').trim();
+    showSaveResult('ok', '✅ ' + L('webDlOk'), who, 6000);
+    status.textContent = L('webDlOk');
+  } catch (e) {
+    showSaveResult('err', '❌ ' + L('webDlFail'), String(e));
+    status.textContent = L('webDlFail') + ': ' + e;
+  }
+}
+// 2단계: 브라우저에서 players.py(+.aisb)+이름을 Apps Script 웹앱으로 '제출'.
+// 제출 공통 검증 → {name, division} 반환(문제 있으면 null).
+function webSubmitValidate() {
+  const status = document.getElementById('status');
+  const nameEl = document.getElementById('ctrlName');
+  const name = ((nameEl && nameEl.value) || '').trim();
+  if (!name || name === 'player_myteam') {
+    showSaveResult('warn', '⚠ ' + L('webNeedName'), ''); status.textContent = L('webNeedName');
+    if (nameEl) nameEl.focus(); return null;
+  }
+  if (!/^[A-Za-z0-9 ._-]+$/.test(name)) {              // 이름은 영문(ASCII)만
+    showSaveResult('warn', '⚠ ' + L('webNameEnglish'), ''); status.textContent = L('webNameEnglish');
+    if (nameEl) nameEl.focus(); return null;
+  }
+  if (!window.SUBMIT_URL || /PASTE|YOUR_|^\s*$/.test(window.SUBMIT_URL)) {
+    showSaveResult('err', '❌ ' + L('webNoUrl'), ''); status.textContent = L('webNoUrl'); return null;
+  }
+  const divEl = document.getElementById('divSel');
+  return { name: name, division: (divEl && divEl.value) || '' };
+}
+// players.py(+선택 .aisb)를 Apps Script 로 전송. 파일명·시트열은 '웹앱이' 정해 보낸다.
+async function webPostSubmission(name, division, pyContent, aisbContent) {
+  const status = document.getElementById('status');
+  status.textContent = L('webSubmitting');
+  showSaveResult('busy', L('webSubmitting'), '');
+  const files = [{ name: name + '.py', content: pyContent, mime: 'text/x-python' }];
+  if (aisbContent) files.push({ name: name + '.aisb', content: aisbContent, mime: 'application/json' });
+  const payload = JSON.stringify({
+    subfolder: division || name,            // 드라이브: 구분(주니어/시니어) 폴더로 나눔
+    header: ['이름', '구분', '파일'],       // 시트 헤더(서버가 앞에 제출시각, 뒤에 링크를 붙임)
+    row: [name, division, name + '.py'],
+    files: files,
+  });
+  // 단순요청(text/plain)으로 CORS 프리플라이트 회피 — Apps Script 가 e.postData.contents 로 받음.
+  const resp = await fetch(window.SUBMIT_URL, {
+    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: payload,
+  });
+  let ok = resp.ok, msg = '';
+  try { const j = await resp.json(); ok = (j.ok !== false); msg = j.message || j.link || ''; } catch (e) {}
+  const tag = name + (division ? (' · ' + division) : '');
+  if (ok) {
+    showSaveResult('ok', '✅ ' + L('webSubmitOk'), tag + (msg ? ('  ·  ' + msg) : ''), 6000);
+    status.textContent = L('webSubmitOk');
+  } else {
+    showSaveResult('err', '❌ ' + L('webSubmitFail'), msg); status.textContent = L('webSubmitFail');
+  }
+}
+// 블록/파이썬 모드로 만든 전략 → players.py 생성 후 제출.
+async function webSubmit() {
+  const v = webSubmitValidate(); if (!v) return;
+  try {
+    const roles = pyMode ? pyRoles() : buildStrategy();
+    const tpl = await webTemplate();
+    const code = webPureCode(webGeneratePlayerPy(roles, tpl));
+    syncBlkTab();
+    if (pyMode) pyText[curTab] = document.getElementById('pyArea').value;
+    const aisb = JSON.stringify({ aisb: 2, tabs: blkState, py: pyText });
+    await webPostSubmission(v.name, v.division, code, aisb);
+  } catch (e) {
+    showSaveResult('err', '❌ ' + L('webSubmitFail'), String(e));
+    document.getElementById('status').textContent = L('webSubmitFail') + ': ' + e;
+  }
+}
+// 블록을 안 쓰고 직접 만든 players.py 파일을 '그대로' 제출(Webots 에서 파이썬 코딩한 경우).
+function webSubmitFile() {
+  const v = webSubmitValidate(); if (!v) return;
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.py,text/x-python,text/plain';
+  inp.addEventListener('change', function () {
+    const f = inp.files && inp.files[0]; if (!f) return;
+    const reader = new FileReader();
+    reader.onload = function () { webPostSubmission(v.name, v.division, String(reader.result), null); };
+    reader.onerror = function () { document.getElementById('status').textContent = L('webSubmitFail'); };
+    reader.readAsText(f);
+  });
+  inp.click();
+}
+// 브라우저(웹앱)에서만 '제출' 버튼 노출 + 이름칸을 '영문 이름' 입력칸으로(데스크톱 앱에선 그대로).
+setTimeout(function () {
+  if (!window.pywebview) {
+    const b = document.getElementById('submitBtn');
+    if (b) { b.style.display = ''; b.textContent = L('submit'); }
+    const dv = document.getElementById('divSel');
+    if (dv) dv.style.display = '';                        // 주니어/시니어 구분
+    const sf = document.getElementById('submitFileBtn');
+    if (sf) { sf.style.display = ''; sf.textContent = L('submitFile'); }  // players.py 직접 제출
+    const nm = document.getElementById('ctrlName');
+    if (nm) {
+      if (nm.value === 'player_myteam') nm.value = '';   // 기본값 비워 학생이 자기 이름 입력
+      nm.placeholder = L('webNamePH');
+      nm.title = L('webNamePH');
+    }
+  }
+}, 300);
+
+// 미리보기용: 역할별로 나눠 보여준다.
+function genCodePreview() {
+  const r = buildStrategy();
+  let out = '';
+  if (r.helpers && r.helpers.trim()) out += '# ' + L('lblDefs') + '\n' + r.helpers + '\n\n';
+  if (r.common.trim()) out += '# ' + L('lblCommon') + '\n' + r.common + '\n';
+  // 로봇 5대가 '실제로 실행할' 코드(탭이 비면 공통 탭을 쓴다 — app.py 와 같은 규칙)
+  const pick = (own) => (own && own.trim()) ? own : (r.common.trim() ? r.common : null);
+  [['GK (0)', r.GK], ['D1 (1)', r.D1], ['D2 (2)', r.D2],
+   ['F1 (3)', r.F1], ['F2 (4)', r.F2]].forEach(function(p) {
+    out += '\n# [' + p[0] + ']\n' + (pick(p[1]) || L('empty'));
+  });
+  return out;
+}
+
+// ===== 모드 전환 (블록 / 파이썬) =====
+function toggleMode() {
+  const area = document.getElementById('pyArea');
+  if (!pyMode) {
+    // 블록 → 파이썬: 현재 블록을 코드로 변환해 편집 시작점으로 채운다(비어있는 역할만).
+    const r = buildStrategy();
+    ROLE_TABS.forEach(k => {
+      if (!pyText[k].trim() && r[k] && r[k].trim()) pyText[k] = r[k];
+    });
+  } else {
+    pyText[curTab] = area.value;  // 파이썬 → 블록 전환 전, 현재 탭 보존
+  }
+  pyMode = !pyMode;
+  document.getElementById('blkEditor').style.display = pyMode ? 'none' : 'flex';
+  document.getElementById('pyEditor').style.display = pyMode ? 'flex' : 'none';
+  document.getElementById('modeBtn').textContent = pyMode ? L('toBlocks') : L('toPython');
+  document.getElementById('appTitle').textContent = pyMode ? L('appPython') : L('appBlocks');
+  if (pyMode) { area.value = pyText[curTab]; area.focus(); }
+  showCode();
+}
+
+function switchPyTab(role) {
+  const area = document.getElementById('pyArea');
+  pyText[curTab] = area.value;          // 떠나는 탭 저장
+  curTab = role;
+  area.value = pyText[role];            // 들어오는 탭 로드
+  document.querySelectorAll('.pytab').forEach(t =>
+    t.classList.toggle('active', t.dataset.role === role));
+  area.focus();
+  showCode();
+}
+
+// textarea 에서 Tab 키가 포커스 이동 대신 4칸 들여쓰기가 되도록
+function initPyArea() {
+  const area = document.getElementById('pyArea');
+  area.addEventListener('keydown', function(e) {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const s = this.selectionStart, en = this.selectionEnd;
+      this.value = this.value.slice(0, s) + '    ' + this.value.slice(en);
+      this.selectionStart = this.selectionEnd = s + 4;
+    }
+  });
+  area.addEventListener('input', () => { pyText[curTab] = area.value; showCode(); });
+}
+
+// 파이썬 모드의 현재 편집 내용을 역할 dict 로 (버튼 저장/미리보기 공용)
+function pyRoles() {
+  const area = document.getElementById('pyArea');
+  if (pyMode) pyText[curTab] = area.value;   // 최신 편집 반영
+  const out = {};
+  ROLE_TABS.forEach(k => { out[k] = pyText[k]; });
+  return out;
+}
+
+function showCode() {
+  const label = {common:L('lblCommonTab'), GK:'GK (0)', D1:'D1 (1)',
+                 D2:'D2 (2)', F1:'F1 (3)', F2:'F2 (4)'};
+  let out;
+  if (pyMode) {
+    const r = pyRoles();
+    out = '';
+    ROLE_TABS.forEach(k => {
+      if (r[k] && r[k].trim()) out += '# [' + label[k] + ']\n' + r[k] + '\n\n';
+    });
+    out = out.trim() || L('writePy');
+  } else {
+    out = genCodePreview().trim() || L('placeBlocks');
+  }
+  // 코드 미리보기 패널은 제거됨(전체 코드는 '📄 코드 보기'로) — 요소가 있을 때만 반영
+  const codeEl = document.getElementById('code');
+  if (codeEl) codeEl.textContent = out;
+}
+
+let _saveResultTimer = null;
+function showSaveResult(kind, headline, detail, autoHideMs) {
+  const el = document.getElementById('saveResult');
+  if (!el) return;
+  el.className = kind || '';
+  el.textContent = detail ? (headline + '\n' + detail) : headline;
+  el.title = L('saveClose');
+  el.style.display = 'block';
+  if (_saveResultTimer) { clearTimeout(_saveResultTimer); _saveResultTimer = null; }
+  if (autoHideMs) _saveResultTimer = setTimeout(function () { el.style.display = 'none'; }, autoHideMs);
+}
+
+async function savePlayer() {
+  const roles = pyMode ? pyRoles() : buildStrategy();
+  const nameEl = document.getElementById('ctrlName');
+  const name = (nameEl && nameEl.value || 'player_myteam').trim();
+  const status = document.getElementById('status');
+  if (!window.pywebview) { await webMakeAndDownload(roles, name, status); return; }  // 브라우저(웹앱) 모드
+  status.textContent = L('saving');
+  showSaveResult('busy', L('saving'), '');
+  const res = await window.pywebview.api.save_player(roles, name);
+  status.textContent = res.message;                 // 상세 메시지는 측면 패널에도 유지
+  const t = new Date().toLocaleTimeString();
+  const where = res.controller ? ('  ·  ' + res.controller) : '';
+  if (!res.ok) {
+    showSaveResult('err', '❌ ' + L('saveFail'), res.message || '');
+  } else if (res.registered) {
+    showSaveResult('ok', '✅ ' + L('saveOkReg'), t + where, 6000);   // 완전 성공은 6초 뒤 자동 사라짐
+  } else {
+    showSaveResult('warn', '⚠ ' + L('saveOkNoReg'), t + where + '\n' + (res.message || ''));
+  }
+}
+
+async function showFullCode() {
+  const status = document.getElementById('status');
+  const roles = pyMode ? pyRoles() : buildStrategy();
+  if (!window.pywebview) {   // 브라우저(웹앱) 모드: JS 가 직접 전체 코드 생성
+    try {
+      const tpl = await webTemplate();
+      // 데스크톱처럼 설명 주석·독스트링을 걷어낸 '순수 코드'로 보여준다(보기 전용).
+      document.getElementById('modalCode').textContent = webPureCode(webGeneratePlayerPy(roles, tpl));
+      document.getElementById('modalTitle').textContent = L('fullCodeShown');
+      document.getElementById('codeModal').style.display = 'block';
+    } catch (e) { status.textContent = L('webDlFail') + ': ' + e; }
+    return;
+  }
+  const res = await window.pywebview.api.full_player_code(roles);
+  if (res.ok) {
+    document.getElementById('modalCode').textContent = res.code;
+    document.getElementById('modalTitle').textContent = L('fullCodeShown');
+    document.getElementById('codeModal').style.display = 'block';
+  } else {
+    status.textContent = res.message || 'error';
+  }
+}
+function closeCodeModal() {
+  document.getElementById('codeModal').style.display = 'none';
+}
+
+async function openFullCode() {
+  const status = document.getElementById('status');
+  const roles = pyMode ? pyRoles() : buildStrategy();
+  if (!window.pywebview) { status.textContent = L('needApp'); return; }
+  const res = await window.pywebview.api.open_full_code(roles);
+  status.textContent = res.message || (res.ok ? 'opened' : 'error');
+}
+
+async function openLicModal() {
+  document.getElementById('licTitle').textContent = L('licTitle');
+  document.getElementById('licHint').textContent = L('licHint');
+  document.getElementById('licCloseBtn').textContent = L('licClose');
+  document.getElementById('licApplyBtn').textContent = L('licApply');
+  document.getElementById('licLoadBtn').textContent = L('licLoad');
+  document.getElementById('licFetchBtn').textContent = L('licFetch');
+  document.getElementById('licStatus').textContent = '';
+  const box = document.getElementById('licMacBox');
+  box.textContent = '…';
+  document.getElementById('licModal').style.display = 'block';
+  if (!window.pywebview) { box.textContent = L('needApp'); return; }
+  const res = await window.pywebview.api.get_mac_list();
+  if (res.ok && res.macs && res.macs.length) {
+    box.textContent = res.macs.map(function(m){
+      return (m.virtual ? '   ' : '★ ') + m.mac + '   ' + m.name + (m.virtual ? '  (가상/보통 아님)' : '');
+    }).join('\n');
+  } else {
+    box.textContent = res.message || 'MAC 없음';
+  }
+}
+async function loadLicenseFile() {
+  const st = document.getElementById('licStatus');
+  if (!window.pywebview) { st.textContent = L('needApp'); return; }
+  const res = await window.pywebview.api.pick_license_file();
+  if (res.ok) {
+    document.getElementById('licEmail').value = res.email;
+    document.getElementById('licSig').value = res.signature;
+    st.textContent = L('licLoaded');
+  } else {
+    st.textContent = res.message;
+  }
+}
+async function fetchLicenseOnline() {
+  const st = document.getElementById('licStatus');
+  const email = document.getElementById('licEmail').value;
+  if (!email) { st.textContent = L('licNeedEmail'); return; }
+  if (!window.pywebview) { st.textContent = L('needApp'); return; }
+  st.textContent = L('licFetching');
+  const res = await window.pywebview.api.fetch_license_online(email);
+  if (res.ok) {
+    document.getElementById('licEmail').value = res.email;
+    document.getElementById('licSig').value = res.signature;
+    st.textContent = res.message;
+  } else {
+    st.textContent = res.message;
+  }
+}
+async function applyLicense() {
+  const st = document.getElementById('licStatus');
+  const email = document.getElementById('licEmail').value;
+  const sig = document.getElementById('licSig').value;
+  if (!window.pywebview) { st.textContent = L('needApp'); return; }
+  const res = await window.pywebview.api.apply_license(email, sig);
+  st.textContent = res.message;
+}
+function closeLicModal() {
+  document.getElementById('licModal').style.display = 'none';
+}
+
+async function changeSavePath() {
+  const status = document.getElementById('status');
+  if (!window.pywebview) { status.textContent = L('needApp'); return; }
+  const res = await window.pywebview.api.change_save_path();
+  status.textContent = res.message;
+}
+
+async function prepareWebots() {
+  const status = document.getElementById('status');
+  if (!window.pywebview) { status.textContent = L('needApp'); return; }
+  status.textContent = L('preparing');
+  const res = await window.pywebview.api.prepare_webots();
+  status.textContent = res.ok ? L('prepDone') : L('prepFail');
+  alert((res.ok ? '✅ Webots 준비\n\n' : '⚠ Webots 준비 (일부 실패)\n\n') + res.message);
+}
+
+// ---- 작업(블럭) 저장/불러오기: 이어하기 ----
+// 예전 형식(한 캔버스 + 역할 hat 블럭)을 탭 구조로 자동 변환한다.
+// hat 안의 블럭 → 해당 탭, hat 밖의 블럭 → 공통 탭. 그룹(DF/FW)은 개별 탭이 비었을 때만 채운다.
+function migrateV1(state) {
+  const HAT = {ai_role_gk:'GK', ai_role_df:'DF', ai_role_fw:'FW',
+               ai_role_d1:'D1', ai_role_d2:'D2', ai_role_f1:'F1', ai_role_f2:'F2'};
+  const bucket = {common:[], GK:[], DF:[], FW:[], D1:[], D2:[], F1:[], F2:[]};
+  const tops = (state && state.blocks && state.blocks.blocks) || [];
+  tops.forEach(function(b) {
+    const r = HAT[b.type];
+    if (r) {
+      const inner = b.inputs && b.inputs.DO && b.inputs.DO.block;
+      if (inner) bucket[r].push(inner);
+    } else {
+      bucket.common.push(b);
+    }
+  });
+  if (!bucket.D1.length) bucket.D1 = bucket.DF;
+  if (!bucket.D2.length) bucket.D2 = bucket.DF;
+  if (!bucket.F1.length) bucket.F1 = bucket.FW;
+  if (!bucket.F2.length) bucket.F2 = bucket.FW;
+
+  const stripIds = function(b) {
+    const c = JSON.parse(JSON.stringify(b));
+    (function walk(n) {
+      if (!n || typeof n !== 'object') return;
+      delete n.id;
+      if (n.inputs) for (const k in n.inputs) { walk(n.inputs[k].block); walk(n.inputs[k].shadow); }
+      if (n.next) walk(n.next.block);
+    })(c);
+    return c;
+  };
+  const out = {};
+  ROLE_TABS.forEach(function(r) {
+    const arr = bucket[r] || [];
+    out[r] = arr.length ? {blocks: {languageVersion: 0, blocks: arr.map(function(b, i) {
+      const c = stripIds(b); c.x = 40; c.y = 30 + i * 220; return c;
+    })}} : null;
+  });
+  return out;
+}
+
+async function saveProject() {
+  const status = document.getElementById('status');
+  syncBlkTab();
+  if (pyMode) pyText[curTab] = document.getElementById('pyArea').value;
+  const text = JSON.stringify({aisb: 2, tabs: blkState, py: pyText});
+  if (!window.pywebview) {   // 브라우저(웹앱): .aisb 파일로 다운로드
+    const nameEl = document.getElementById('ctrlName');
+    const base = (((nameEl && nameEl.value) || 'my_project').trim()
+                  .replace(/[^\w\-.]+/g, '_')) || 'my_project';
+    webDownloadText(base + '.aisb', text);
+    status.textContent = L('webSaved');
+    return;
+  }
+  const res = await window.pywebview.api.save_project(text);
+  status.textContent = res.message;
+}
+// 불러온 내용(JSON 문자열)을 작업공간에 반영한다 — 데스크톱/브라우저 공용.
+function applyProjectText(content, baseMsg) {
+  const status = document.getElementById('status');
+  try {
+    const data = JSON.parse(content);
+    let tabs;
+    if (data && data.aisb === 2 && data.tabs) {
+      tabs = data.tabs;
+      if (data.py) ROLE_TABS.forEach(k => { pyText[k] = data.py[k] || ''; });
+    } else {
+      tabs = migrateV1(data);          // 예전 파일 → 탭으로 변환
+    }
+    ROLE_TABS.forEach(function(r) { blkState[r] = tabs[r] || null; });
+    // 불러온 뒤에는 '블럭이 들어 있는 첫 탭'을 보여준다.
+    var filled = ROLE_TABS.filter(function(r) { return blkState[r]; });
+    curBlkTab = filled[0] || 'common';
+    workspace.clear();
+    if (blkState[curBlkTab]) {
+      try { Blockly.serialization.workspaces.load(blkState[curBlkTab], workspace); } catch (e) {}
+    }
+    markBlkTab(curBlkTab);
+    status.textContent = (baseMsg || '') +
+      (filled.length ? (' — 블럭 있는 탭: ' + filled.join(', ')) : ' — (블럭 없음)');
+    showCode();
+  } catch (e) {
+    status.textContent = L('loadFail');
+  }
+}
+// 브라우저(웹앱): 파일 선택창을 열어 .aisb 를 읽어들인다.
+function webLoadProjectFile() {
+  const status = document.getElementById('status');
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.aisb,.json,application/json,text/plain';
+  inp.addEventListener('change', function() {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = function() { applyProjectText(String(reader.result), f.name); };
+    reader.onerror = function() { status.textContent = L('loadFail'); };
+    reader.readAsText(f);
+  });
+  inp.click();
+}
+async function loadProject() {
+  const status = document.getElementById('status');
+  if (!window.pywebview) { webLoadProjectFile(); return; }   // 브라우저(웹앱)
+  const res = await window.pywebview.api.load_project();
+  if (!res.ok) { status.textContent = res.message; return; }
+  applyProjectText(res.content, res.message);
+}
+
+// =====================================================================
+//  시작
+// =====================================================================
+try { const saved = localStorage.getItem('ai_football_lang'); if (saved === 'ko' || saved === 'en') LANG = saved; } catch (e) {}
+initPyArea();          // 파이썬 에디터(Tab 들여쓰기 등) 준비 — DOM 고정이라 1회만
+applyLang();           // 워크스페이스 생성 + 언어 적용
+{ const c = document.getElementById('code'); if (c) c.textContent = L('codePlaceholder'); }
+</script>
+</body>
+</html>
